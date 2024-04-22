@@ -16515,8 +16515,11 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         }
 
         int layer = atoi(&tensor->name[6]);
+        // section critique
+        pthread_mutex_lock(&lock);
         if (++nthrpassed[layer]==params->nth) {
             // tous les threads sont passes ici, je peux sauver...
+            // bug possible si 2 threads finissent 2 layers differentes ?
             nthrpassed[layer]=0;
             float *detv = (float *)tensor->data;
             int ntoks = tensor->ne[0];
@@ -16524,8 +16527,6 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             int chanout = tensor->ne[2];
             int chanin = tensor->ne[3];
             printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
-            // section critique
-            pthread_mutex_lock(&lock);
             FILE *f = fopen("acts.bin","ab");
             fwrite(&layer,sizeof(int),1,f);
             fwrite(&ntoks,sizeof(int),1,f);
@@ -16534,8 +16535,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             fwrite(&chanin,sizeof(int),1,f);
             fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
             fclose(f);
-            pthread_mutex_unlock(&lock);
         }
+        pthread_mutex_unlock(&lock);
     }
 }
 // note que apres le 1er token genere, il cache tous les tokens de la 1ere passe et d'en genere plus qu'un seul
