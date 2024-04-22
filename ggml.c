@@ -16157,6 +16157,7 @@ static void ggml_compute_forward_cross_entropy_loss_back(
 
 pthread_mutex_t lock;
 int islockcreated = 0;
+int nthrpassed[100];
 
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
@@ -16502,34 +16503,43 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
     }
     if (tensor->name[0]=='l' && tensor->name[1]=='_') { // l_out == last op in a layer
-        float *v = (float *)tensor->data;
-        printf("save %s\n",tensor->name);
-        int layer = atoi(&tensor->name[6]);
-        int ntoks = tensor->ne[0];
-        int vecdim = tensor->ne[1];
-        int chanout = tensor->ne[2];
-        int chanin = tensor->ne[3];
-        if (islockcreated==0) {
+        if (islockcreated==0 && params->ith==0) {
+            // je cree le lock seulement avec le thread 0 (le lock ne sera utilise que quand tous les threads seront passes de toute maniere)
+            // je ne veux pas que les autres threads sauvent dans le meme fichier en meme temps;
+            // ca ne devrait pas arriver car on sauve quand tous les threads sont passes, mais bon...
             printf("creating lock\n");
             if (pthread_mutex_init(&lock, NULL) != 0) {
                 printf("\n mutex init has failed\n");
             }
             islockcreated=1;
         }
-        pthread_mutex_lock(&lock);
-        FILE *f = fopen("acts.bin","ab");
-        fwrite(&layer,sizeof(int),1,f);
-        fwrite(&ntoks,sizeof(int),1,f);
-        fwrite(&vecdim,sizeof(int),1,f);
-        fwrite(&chanout,sizeof(int),1,f);
-        fwrite(&chanin,sizeof(int),1,f);
-        fwrite(v,sizeof(float),ntoks*vecdim*chanout*chanin,f);
-        fclose(f);
-        pthread_mutex_unlock(&lock);
+
+        int layer = atoi(&tensor->name[6]);
+        if (++nthrpassed[layer]==params->nth) {
+            // tous les threads sont passes ici, je peux sauver...
+            nthrpassed[layer]=0;
+            float *detv = (float *)tensor->data;
+            int ntoks = tensor->ne[0];
+            int vecdim = tensor->ne[1];
+            int chanout = tensor->ne[2];
+            int chanin = tensor->ne[3];
+            printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
+            // section critique
+            pthread_mutex_lock(&lock);
+            FILE *f = fopen("acts.bin","ab");
+            fwrite(&layer,sizeof(int),1,f);
+            fwrite(&ntoks,sizeof(int),1,f);
+            fwrite(&vecdim,sizeof(int),1,f);
+            fwrite(&chanout,sizeof(int),1,f);
+            fwrite(&chanin,sizeof(int),1,f);
+            fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
+            fclose(f);
+            pthread_mutex_unlock(&lock);
+        }
     }
-    // note que apres le 1er token genere, il cache tous les tokens de la 1ere passe et d'en genere plus qu'un seul
-    // aussi, il passe 4 fois dans le meme node (donc il ne faudrait pas l'enregistrer 4 fois...)
 }
+// note que apres le 1er token genere, il cache tous les tokens de la 1ere passe et d'en genere plus qu'un seul
+// aussi, il passe 4 fois dans le meme node (donc il ne faudrait pas l'enregistrer 4 fois...)
 
 ////////////////////////////////////////////////////////////////////////////////
 
