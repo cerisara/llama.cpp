@@ -211,6 +211,7 @@ enum llm_arch {
     LLM_ARCH_QWEN2,
     LLM_ARCH_QWEN2MOE,
     LLM_ARCH_PHI2,
+    LLM_ARCH_PHI3,
     LLM_ARCH_PLAMO,
     LLM_ARCH_CODESHELL,
     LLM_ARCH_ORION,
@@ -246,6 +247,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_QWEN2,           "qwen2"      },
     { LLM_ARCH_QWEN2MOE,        "qwen2moe"   },
     { LLM_ARCH_PHI2,            "phi2"       },
+    { LLM_ARCH_PHI3,            "phi3"       },
     { LLM_ARCH_PLAMO,           "plamo"      },
     { LLM_ARCH_CODESHELL,       "codeshell"  },
     { LLM_ARCH_ORION,           "orion"      },
@@ -789,6 +791,23 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
             { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
             { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
             { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
+            { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+            { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
+        },
+    },
+    {
+        LLM_ARCH_PHI3,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
+            { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
+            { LLM_TENSOR_OUTPUT,          "output" },
+            { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_QKV,        "blk.%d.attn_qkv" },
+            { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
+            { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
             { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
             { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
         },
@@ -2980,9 +2999,13 @@ struct llama_model_loader {
 
         ggml_tensor * tensor;
 
-        llama_tensor_weight(uint16_t idx, const char * name, const struct gguf_context * gguf_ctx, ggml_tensor * tensor) : idx(idx), tensor(tensor) {
+        llama_tensor_weight(const llama_file * file, uint16_t idx, const char * name, const struct gguf_context * gguf_ctx, ggml_tensor * tensor) : idx(idx), tensor(tensor) {
             const int tensor_idx = gguf_find_tensor(gguf_ctx, name);
             offs = gguf_get_data_offset(gguf_ctx) + gguf_get_tensor_offset(gguf_ctx, tensor_idx);
+
+            if (offs + ggml_nbytes(tensor) < offs || offs + ggml_nbytes(tensor) > file->size) {
+                throw std::runtime_error(format("tensor '%s' data is not within the file bounds, model is corrupted or incomplete", name));
+            }
         }
     };
     std::vector<llama_tensor_weight> weights;
@@ -3021,15 +3044,15 @@ struct llama_model_loader {
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
+        files.emplace_back(new llama_file(fname.c_str(), "rb"));
+        contexts.emplace_back(ctx);
+
         // Save tensors data offset of the main file.
         // For subsidiary files, `meta` tensor data offset must not be used,
         // so we build a unified tensors index for weights.
         for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-            weights.emplace_back(0, cur->name, meta, cur);
+            weights.emplace_back(files.back().get(), 0, cur->name, meta, cur);
         }
-        files.emplace_back(new llama_file(fname.c_str(), "rb"));
-        contexts.emplace_back(ctx);
-
         uint16_t n_split = 0;
         get_key(llm_kv(LLM_KV_SPLIT_COUNT), n_split, false);
 
@@ -3063,12 +3086,13 @@ struct llama_model_loader {
                     throw std::runtime_error(format("%s: failed to load GGUF split from %s\n", __func__, split_path));
                 }
 
-                // Save tensors data offset info of the shard.
-                for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-                    weights.emplace_back(idx, cur->name, ctx_gguf, cur);
-                }
                 files.emplace_back(new llama_file(split_path, "rb"));
                 contexts.emplace_back(ctx);
+
+                // Save tensors data offset info of the shard.
+                for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
+                    weights.emplace_back(files.back().get(), idx, cur->name, ctx_gguf, cur);
+                }
 
                 gguf_free(ctx_gguf);
             }
@@ -3276,6 +3300,10 @@ struct llama_model_loader {
             }
         }
         return nullptr;
+    }
+
+    const llama_tensor_weight * get_weight(int i) const {
+        return get_weight(get_tensor_name(i));
     }
 
     const llama_tensor_weight & require_weight(const char * name) const {
@@ -3961,6 +3989,16 @@ static void llm_load_hparams(
                     default: model.type = e_model::MODEL_UNKNOWN;
                 }
             } break;
+        case LLM_ARCH_PHI3:
+            {
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+
+                switch (hparams.n_layer) {
+                    case 24: model.type = e_model::MODEL_1B; break;
+                    case 32: model.type = e_model::MODEL_3B; break;
+                    default: model.type = e_model::MODEL_UNKNOWN;
+                }
+            } break;
         case LLM_ARCH_PLAMO:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
@@ -4340,7 +4378,7 @@ static void llm_load_vocab(
             }
         }
 
-        // find EOT token: "<|eot_id|>", "<|im_emd|>", "<end_of_turn>", etc.
+        // find EOT token: "<|eot_id|>", "<|im_end|>", "<end_of_turn>", etc.
         //
         // TODO: convert scripts should provide this token through the KV metadata LLAMA_KV_TOKENIZER_EOT_ID
         //       for now, we apply this workaround to find the EOT token based on its text
@@ -4351,7 +4389,8 @@ static void llm_load_vocab(
                         //       need to fix convert script
                         //vocab.id_to_token[t.second].type == LLAMA_TOKEN_TYPE_CONTROL &&
                         (t.first == "<|eot_id|>" ||
-                         t.first == "<|im_emd|>" ||
+                         t.first == "<|im_end|>" ||
+                         t.first == "<|end|>" ||
                          t.first == "<end_of_turn>"
                         )
                    ) {
@@ -5375,6 +5414,33 @@ static bool llm_load_tensors(
                         layer.ffn_up_b   = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_UP,   "bias", i),   {n_ff});
                     }
                 } break;
+            case LLM_ARCH_PHI3:
+                {
+                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab });
+
+                    // output
+                    {
+                        model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd });
+                        model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
+                    }
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        ggml_context* ctx_layer = ctx_for_layer(i);
+                        ggml_context* ctx_split = ctx_for_layer_split(i);
+
+                        auto& layer = model.layers[i];
+
+                        layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd });
+
+                        layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);
+                        layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd });
+
+                        layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd });
+
+                        layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd });
+                        layer.ffn_up = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * n_ff });
+                    }
+                } break;
             case LLM_ARCH_PLAMO:
                 {
                     model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
@@ -6326,7 +6392,7 @@ static struct ggml_tensor * llm_build_kqv(
     struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
     cb(kq, "kq", il);
 
-    if (model.arch == LLM_ARCH_PHI2) {
+    if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3) {
         // for this arch, we need to perform the KQ multiplication with F32 precision, otherwise we get NaNs
         // ref: https://github.com/ggerganov/llama.cpp/pull/4490#issuecomment-1859055847
         ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
@@ -8967,11 +9033,139 @@ struct llm_build_context {
 
         cur = ggml_add(ctx0, cur, model.output_b);
         cb(cur, "result_output", -1);
+        ggml_build_forward_expand(gf, cur);
+        return gf;
+    }
+
+    struct ggml_cgraph * build_phi3() {
+        struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
+
+        const int64_t n_embd_head = hparams.n_embd_head_v;
+        const int64_t n_embd_gqa = hparams.n_embd_v_gqa();
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+
+        struct ggml_tensor * cur;
+        struct ggml_tensor * inpL;
+
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+
+        // inp_pos - contains the positions
+        struct ggml_tensor * inp_pos = build_inp_pos();
+
+        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
+        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
+
+        for (int il = 0; il < n_layer; ++il) {
+            auto residual = inpL;
+
+            // self-attention
+            {
+                struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, hparams,
+                    model.layers[il].attn_norm,
+                    NULL,
+                    LLM_NORM_RMS, cb, il);
+                cb(attn_norm_output, "attn_norm", il);
+
+                struct ggml_tensor * Qcur = nullptr;
+                struct ggml_tensor * Kcur = nullptr;
+                struct ggml_tensor * Vcur = nullptr;
+
+                if (model.layers[il].wqkv) {
+                    cur = ggml_mul_mat(ctx0, model.layers[il].wqkv, attn_norm_output);
+                    cb(cur, "wqkv", il);
+
+                    Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
+                    Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
+                    Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_gqa)));
+                }
+                else {
+                    Qcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wq, attn_norm_output), model.layers[il].bq);
+                    Kcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wk, attn_norm_output), model.layers[il].bk);
+                    Vcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wv, attn_norm_output), model.layers[il].bv);
+                }
+
+                cb(Qcur, "Qcur", il);
+                cb(Kcur, "Kcur", il);
+                cb(Vcur, "Vcur", il);
+
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+
+                Qcur = ggml_rope_custom(
+                    ctx0, Qcur, inp_pos, n_rot, rope_type, 0, n_orig_ctx,
+                    freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Qcur, "Qcur", il);
+
+                Qcur = ggml_scale(ctx0, Qcur, 1.0f / sqrtf(float(n_embd_head)));
+                cb(Qcur, "Qcur", il);
+
+                Kcur = ggml_rope_custom(
+                    ctx0, Kcur, inp_pos, n_rot, rope_type, 0, n_orig_ctx,
+                    freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Kcur, "Kcur", il);
+
+                cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
+                    model.layers[il].wo, NULL,
+                    Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
+            }
+
+            if (il == n_layer - 1) {
+                // skip computing output for unused tokens
+                struct ggml_tensor* inp_out_ids = build_inp_out_ids();
+                cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+                residual = ggml_get_rows(ctx0, residual, inp_out_ids);
+            }
+
+            cur = ggml_add(ctx0, cur, residual);
+            residual = cur;
+
+            cur = llm_build_norm(ctx0, cur, hparams,
+                model.layers[il].ffn_norm, NULL,
+                LLM_NORM_RMS, cb, il);
+            cb(cur, "ffn_norm", il);
+
+            // FF
+            // special-case: the up and gate tensors are merged into a single tensor
+            // TOOD: support into llm_build_ffn
+            {
+                struct ggml_tensor* up = ggml_mul_mat(ctx0, model.layers[il].ffn_up, cur);
+                cb(up, "ffn_up", il);
+
+                auto g = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), 0));
+                auto y = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), up->nb[1] / 2));
+
+                y = ggml_mul(ctx0, y, ggml_silu(ctx0, g));
+                cb(y, "ffn_gate", il);
+
+                auto down = ggml_mul_mat(ctx0, model.layers[il].ffn_down, y);
+                cb(down, "ffn_down", il);
+
+                cur = down;
+                cb(cur, "ffn_out", il);
+            }
+
+            cur = ggml_add(ctx0, residual, cur);
+            cb(cur, "l_out", il);
+
+            inpL = cur;
+        }
+
+        cur = llm_build_norm(ctx0, inpL, hparams,
+            model.output_norm,
+            NULL,
+            LLM_NORM_RMS, cb, -1);
+        cb(cur, "result_norm", -1);
+
+        cur = ggml_mul_mat(ctx0, model.output, cur);
+        cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
 
         return gf;
     }
+
 
     struct ggml_cgraph * build_plamo() {
         struct ggml_cgraph * gf = ggml_new_graph(ctx0);
@@ -10473,6 +10667,10 @@ static struct ggml_cgraph * llama_build_graph(
         case LLM_ARCH_PHI2:
             {
                 result = llm.build_phi2();
+            } break;
+        case LLM_ARCH_PHI3:
+            {
+                result = llm.build_phi3();
             } break;
         case LLM_ARCH_PLAMO:
             {
@@ -13478,7 +13676,7 @@ llama_token llama_sample_token_greedy(struct llama_context * ctx, llama_token_da
     return result;
 }
 
-llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_array * candidates) {
+llama_token llama_sample_token_with_rng(struct llama_context * ctx, llama_token_data_array * candidates, std::mt19937 & rng) {
     GGML_ASSERT(ctx);
 
     const int64_t t_start_sample_us = ggml_time_us();
@@ -13491,7 +13689,6 @@ llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_arra
     }
 
     std::discrete_distribution<> dist(probs.begin(), probs.end());
-    auto & rng = ctx->rng;
     int idx = dist(rng);
 
     llama_token result = candidates->data[idx].id;
@@ -13499,6 +13696,10 @@ llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_arra
     ctx->t_sample_us += ggml_time_us() - t_start_sample_us;
     ctx->n_sample++;
     return result;
+}
+
+llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_array * candidates) {
+    return llama_sample_token_with_rng(ctx, candidates, ctx->rng);
 }
 
 void llama_grammar_accept_token(struct llama_context * ctx, struct llama_grammar * grammar, llama_token token) {
@@ -14336,26 +14537,74 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
     std::vector<no_init<uint8_t>> work;
     std::vector<no_init<float>> f32_conv_buf;
 
+    uint16_t n_split = 1;
+    // Assume split index is continuous
+    if (params->keep_split) {
+        for (int i = 0; i < ml.n_tensors; ++i) {
+            n_split = std::max(uint16_t(ml.get_weight(i)->idx+1), n_split);
+        }
+    }
+    std::vector<gguf_context*> ctx_outs(n_split, NULL);
+    ctx_outs[0] = ctx_out;
+
     // populate the original tensors so we get an initial meta data
     for (int i = 0; i < ml.n_tensors; ++i) {
-        const struct ggml_tensor * meta = ml.get_tensor_meta(i);
-        gguf_add_tensor(ctx_out, meta);
+        auto weight = ml.get_weight(i);
+        uint16_t i_split = params->keep_split ? weight->idx : 0;
+        struct ggml_tensor * tensor = weight->tensor;
+        if (ctx_outs[i_split] == NULL) {
+            ctx_outs[i_split] = gguf_init_empty();
+        }
+        gguf_add_tensor(ctx_outs[i_split], tensor);
     }
 
-    std::ofstream fout(fname_out, std::ios::binary);
-    fout.exceptions(std::ofstream::failbit); // fail fast on write errors
+    // Set split info if needed
+    if (n_split > 1) {
+        for (size_t i = 0; i < ctx_outs.size(); ++i) {
+            gguf_set_val_u16(ctx_outs[i], ml.llm_kv(LLM_KV_SPLIT_NO).c_str(), i);
+            gguf_set_val_u16(ctx_outs[i], ml.llm_kv(LLM_KV_SPLIT_COUNT).c_str(), n_split);
+            gguf_set_val_i32(ctx_outs[i], ml.llm_kv(LLM_KV_SPLIT_TENSORS_COUNT).c_str(), ml.n_tensors);
+        }
+    }
 
-    const size_t meta_size = gguf_get_meta_size(ctx_out);
+    int cur_split = -1;
+    std::ofstream fout;
+    auto close_ofstream = [&]() {
+        // Write metadata and close file handler
+        if (fout.is_open()) {
+            fout.seekp(0);
+            std::vector<uint8_t> data(gguf_get_meta_size(ctx_outs[cur_split]));
+            gguf_get_meta_data(ctx_outs[cur_split], data.data());
+            fout.write((const char *) data.data(), data.size());
+            fout.close();
+        }
+    };
+    auto new_ofstream = [&](int index) {
+        cur_split = index;
+        GGML_ASSERT(ctx_outs[cur_split] && "Find uninitialized gguf_context");
+        std::string fname = fname_out;
+        if (params->keep_split) {
+            char split_path[PATH_MAX] = {0};
+            llama_split_path(split_path, sizeof(split_path), fname_out.c_str(), cur_split, n_split);
+            fname = std::string(split_path);
+        }
 
-    LLAMA_LOG_INFO("%s: meta size = %zu bytes\n", __func__, meta_size);
-
-    // placeholder for the meta data
-    ::zeros(fout, meta_size);
+        fout = std::ofstream(fname, std::ios::binary);
+        fout.exceptions(std::ofstream::failbit); // fail fast on write errors
+        const size_t meta_size = gguf_get_meta_size(ctx_outs[cur_split]);
+        // placeholder for the meta data
+        ::zeros(fout, meta_size);
+    };
 
     const auto tn = LLM_TN(model.arch);
-
+    new_ofstream(0);
     for (int i = 0; i < ml.n_tensors; ++i) {
-        struct ggml_tensor * tensor = ml.get_tensor_meta(i);
+        auto weight = ml.get_weight(i);
+        struct ggml_tensor * tensor = weight->tensor;
+        if (weight->idx != cur_split && params->keep_split) {
+            close_ofstream();
+            new_ofstream(weight->idx);
+        }
 
         const std::string name = ggml_get_name(tensor);
 
@@ -14510,25 +14759,17 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
         total_size_new += new_size;
 
         // update the gguf meta data as we go
-        gguf_set_tensor_type(ctx_out, name.c_str(), new_type);
-        gguf_set_tensor_data(ctx_out, name.c_str(), new_data, new_size);
+        gguf_set_tensor_type(ctx_outs[cur_split], name.c_str(), new_type);
+        gguf_set_tensor_data(ctx_outs[cur_split], name.c_str(), new_data, new_size);
 
         // write tensor data + padding
         fout.write((const char *) new_data, new_size);
         zeros(fout, GGML_PAD(new_size, align) - new_size);
     }
-
-    // go back to beginning of file and write the updated meta data
-    {
-        fout.seekp(0);
-        std::vector<uint8_t> data(gguf_get_meta_size(ctx_out));
-        gguf_get_meta_data(ctx_out, data.data());
-        fout.write((const char *) data.data(), data.size());
+    close_ofstream();
+    for (auto & c:ctx_outs) {
+        gguf_free(c);
     }
-
-    fout.close();
-
-    gguf_free(ctx_out);
 
     LLAMA_LOG_INFO("%s: model size  = %8.2f MB\n", __func__, total_size_org/1024.0/1024.0);
     LLAMA_LOG_INFO("%s: quant size  = %8.2f MB\n", __func__, total_size_new/1024.0/1024.0);
@@ -14885,6 +15126,7 @@ struct llama_model_quantize_params llama_model_quantize_default_params() {
         /*.quantize_output_tensor      =*/ true,
         /*.only_copy                   =*/ false,
         /*.pure                        =*/ false,
+        /*.keep_split                  =*/ false,
         /*.imatrix                     =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,
     };
@@ -15393,6 +15635,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
         case LLM_ARCH_QWEN2:
         case LLM_ARCH_QWEN2MOE:
         case LLM_ARCH_PHI2:
+        case LLM_ARCH_PHI3:
         case LLM_ARCH_GEMMA:
         case LLM_ARCH_STARCODER2:
             return LLAMA_ROPE_TYPE_NEOX;
@@ -15404,6 +15647,10 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
     }
 
     return LLAMA_ROPE_TYPE_NONE;
+}
+
+enum llama_pooling_type llama_pooling_type(const struct llama_context * ctx) {
+    return ctx->cparams.pooling_type;
 }
 
 int32_t llama_n_vocab(const struct llama_model * model) {
@@ -15884,6 +16131,8 @@ struct llama_data_file_context : llama_data_context {
  *
 */
 static void llama_state_get_data_internal(struct llama_context * ctx, llama_data_context * data_ctx) {
+    llama_synchronize(ctx);
+
     // copy rng
     {
         std::ostringstream rng_ss;
@@ -16036,6 +16285,8 @@ size_t llama_state_get_data(struct llama_context * ctx, uint8_t * dst) {
 
 // Sets the state reading from the specified source address
 size_t llama_state_set_data(struct llama_context * ctx, const uint8_t * src) {
+    llama_synchronize(ctx);
+
     const uint8_t * inp = src;
 
     // set rng
@@ -16340,6 +16591,8 @@ size_t llama_state_seq_get_size(struct llama_context* ctx, llama_seq_id seq_id) 
 }
 
 static size_t llama_state_seq_get_data_internal(struct llama_context * ctx, llama_data_context & data_ctx, llama_seq_id seq_id) {
+    llama_synchronize(ctx);
+
     const auto & kv_self = ctx->kv_self;
     GGML_ASSERT(!kv_self.recurrent); // not implemented
 
@@ -16457,6 +16710,8 @@ size_t llama_state_seq_get_data(struct llama_context* ctx, uint8_t* dst, llama_s
 }
 
 size_t llama_state_seq_set_data(struct llama_context * ctx, const uint8_t * src, llama_seq_id dest_seq_id) {
+    llama_synchronize(ctx);
+
     auto & kv_self = ctx->kv_self;
     GGML_ASSERT(!kv_self.recurrent); // not implemented
 
@@ -17257,6 +17512,15 @@ static int32_t llama_chat_apply_template_internal(
         if (add_ass) {
             ss << "<|start_header_id|>assistant<|end_header_id|>\n\n";
         }
+    } else if (tmpl == "phi3" || (tmpl.find("<|assistant|>") != std::string::npos && tmpl.find("<|end|>") != std::string::npos )) {
+        // Phi 3
+        for (auto message : chat) {
+            std::string role(message->role);
+            ss << "<|" << role << "|>\n" << trim(message->content) << "<|end|>\n";
+        }
+        if (add_ass) {
+            ss << "<|assistant|>\n";
+        }
     } else {
         // template not supported
         return -1;
@@ -17389,6 +17653,11 @@ const char * llama_print_system_info(void) {
     s += "SSSE3 = "       + std::to_string(ggml_cpu_has_ssse3())       + " | ";
     s += "VSX = "         + std::to_string(ggml_cpu_has_vsx())         + " | ";
     s += "MATMUL_INT8 = " + std::to_string(ggml_cpu_has_matmul_int8()) + " | ";
+#ifdef GGML_USE_LLAMAFILE
+    s += "LAMMAFILE = 1 | ";
+#else
+    s += "LAMMAFILE = 0 | ";
+#endif
 
     return s.c_str();
 }
