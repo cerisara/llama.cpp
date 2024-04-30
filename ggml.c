@@ -16489,14 +16489,27 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
     }
     const char* detsave = getenv("DETSAVE");
-    if (detsave!=NULL) {
-        printf("OPnode %s\n", tensor->name);
+    const char* detdbug = getenv("DETDBUG");
+    const char* detadd = getenv("DETADD");
+    float addact[100][15000];
+    if (detadd!=NULL) {
+        FILE *f = fopen("/tmp/ttt","r");
+        int l,d;
+        float v;
+        while (!feof(f)) {
+            fscanf(f,"%d %d %f\n",&l,&d,&v);
+            addact[l][d]=v;
+        }
+        fclose(f);
+    }
+    if (detsave!=NULL || detadd!=NULL) {
+        if (detdbug!=NULL) printf("OPnode %s\n", tensor->name);
         if (tensor->name[0]=='l' && tensor->name[1]=='_') { // l_out == last op in a layer
             if (islockcreated==0 && params->ith==0) {
                 // je cree le lock seulement avec le thread 0 (le lock ne sera utilise que quand tous les threads seront passes de toute maniere)
                 // je ne veux pas que les autres threads sauvent dans le meme fichier en meme temps;
                 // ca ne devrait pas arriver car on sauve quand tous les threads sont passes, mais bon...
-                printf("creating lock\n");
+                if (detdbug!=NULL) printf("creating lock\n");
                 if (pthread_mutex_init(&lock, NULL) != 0) {
                     printf("\n mutex init has failed\n");
                 }
@@ -16515,15 +16528,22 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 int vecdim = tensor->ne[1];
                 int chanout = tensor->ne[2];
                 int chanin = tensor->ne[3];
-                printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
-                FILE *f = fopen("acts.bin","ab");
-                fwrite(&layer,sizeof(int),1,f);
-                fwrite(&ntoks,sizeof(int),1,f);
-                fwrite(&vecdim,sizeof(int),1,f);
-                fwrite(&chanout,sizeof(int),1,f);
-                fwrite(&chanin,sizeof(int),1,f);
-                fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
-                fclose(f);
+                if (detdbug!=NULL) printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
+                if (detadd!=NULL) {
+                    // TODO: check that the starting pos of the last vector is this one:
+                    int pos = (ntoks-1)*vecdim*chanout*chanin;
+                    for (int i=0;i<vecdim;i++) detv[pos+i] = detv[pos+i] + addact[layer][i];
+                }
+                if (detsave!=NULL) {
+                    FILE *f = fopen("acts.bin","ab");
+                    fwrite(&layer,sizeof(int),1,f);
+                    fwrite(&ntoks,sizeof(int),1,f);
+                    fwrite(&vecdim,sizeof(int),1,f);
+                    fwrite(&chanout,sizeof(int),1,f);
+                    fwrite(&chanin,sizeof(int),1,f);
+                    fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
+                    fclose(f);
+                }
             }
             pthread_mutex_unlock(&lock);
         } else if (strcmp(tensor->name,"inp_embd")==0) {
@@ -16533,15 +16553,17 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             int chanin = tensor->ne[3];
             float *detv = (float *)tensor->data;
             if (params->ith==0) {
-                printf("INEMBED %d %d %d %d %d %d %f %f\n",params->ith, params->nth, ntoks, vecdim, chanout, chanin, detv[0], detv[1]);
+                if (detdbug!=NULL) printf("INEMBED %d %d %d %d %d %d %f %f\n",params->ith, params->nth, ntoks, vecdim, chanout, chanin, detv[0], detv[1]);
                 // I assume that embeddings are the same for all threads, so I just save the first thread
-                FILE *f = fopen("embeds.bin","ab");
-                fwrite(&ntoks,sizeof(int),1,f);
-                fwrite(&vecdim,sizeof(int),1,f);
-                fwrite(&chanout,sizeof(int),1,f);
-                fwrite(&chanin,sizeof(int),1,f);
-                fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
-                fclose(f);
+                if (detsave!=NULL) {
+                    FILE *f = fopen("embeds.bin","ab");
+                    fwrite(&ntoks,sizeof(int),1,f);
+                    fwrite(&vecdim,sizeof(int),1,f);
+                    fwrite(&chanout,sizeof(int),1,f);
+                    fwrite(&chanin,sizeof(int),1,f);
+                    fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
+                    fclose(f);
+                }
             }
         }
     }
