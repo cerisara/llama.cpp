@@ -16148,7 +16148,7 @@ int nthrpassed[100];
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
-    printf("\nOOPnode %s %s\n", tensor->name, ggml_op_name(tensor->op));
+    // printf("\nOOPnode %s %s\n", tensor->name, ggml_op_name(tensor->op));
 
     if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
         return;
