@@ -2158,6 +2158,8 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         ggml_cuda_set_peer_access(dst->src[1]->ne[1], ctx.device);
     }
 
+    printf("CUDAOP %d\n", dst->op);
+
     switch (dst->op) {
         case GGML_OP_REPEAT:
             ggml_cuda_op_repeat(ctx, dst);
