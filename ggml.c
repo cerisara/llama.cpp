@@ -16148,6 +16148,8 @@ int nthrpassed[100];
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
+    printf("\nOOPnode %s %s\n", tensor->name, ggml_op_name(tensor->op));
+
     if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
         return;
     }
@@ -16530,9 +16532,12 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 int chanin = tensor->ne[3];
                 if (detdbug!=NULL) printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
                 if (detadd!=NULL) {
+                    printf("detadd %d\n",layer);
                     // TODO: check that the starting pos of the last vector is this one:
                     int pos = (ntoks-1)*vecdim*chanout*chanin;
                     for (int i=0;i<vecdim;i++) detv[pos+i] = detv[pos+i] + addact[layer][i];
+                    // DEBUG
+                    for (int i=0;i<ntoks*vecdim*chanout*chanin;i++) detv[i]=0.;
                 }
                 if (detsave!=NULL) {
                     FILE *f = fopen("acts.bin","ab");
