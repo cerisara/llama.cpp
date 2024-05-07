@@ -7095,6 +7095,8 @@ struct llm_build_context {
             // detson
             ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
             // je ne sais pas comment set la value d'un tensor, donc je le mets à 0 comme cela:
+            //         ggml_backend_tensor_set(inp_raw, data, 0, ggml_nbytes(inp_raw));
+
             ggml_tensor * aa = ggml_sub(ctx0, addact, addact);
             cur = ggml_add(ctx0, cur, aa);
             // printf("detson %d %d %d %d\n", cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
