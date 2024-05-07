@@ -6968,7 +6968,7 @@ struct llm_build_context {
         return lctx.inp_s_seq;
     }
 
-    struct ggml_cgraph * build_llama_orig() {
+    struct ggml_cgraph * build_llama() {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
 
         // mutable variable, needed during the last layer of the computation to skip unused tokens
@@ -7091,6 +7091,15 @@ struct llm_build_context {
             if (layer_dir != nullptr) {
                 cur = ggml_add(ctx0, cur, layer_dir);
             }
+
+            // detson
+            ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
+            // je ne sais pas comment set la value d'un tensor, donc je le mets à 0 comme cela:
+            ggml_tensor * aa = ggml_sub(ctx0, addact, addact);
+            cur = ggml_add(ctx0, cur, aa);
+            // printf("detson %d %d %d %d\n", cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
+            // printf("detsoN %d %d %d %d\n", addact->ne[0], addact->ne[1], addact->ne[2], addact->ne[3]);
+
             cb(cur, "l_out", il);
 
             // input for next layer
@@ -7111,20 +7120,6 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
 
         return gf;
-    }
-
-    // debug detson xtof
-    // il reconstruit le graph a chaque token généré
-    struct ggml_cgraph * build_llama() {
-        ggml_cgraph *g = build_llama_orig();
-        // printf("detgraph %d\n",g->n_nodes);
-        for (int i=0;i<g->n_nodes;i++) {
-            ggml_tensor *n = g->nodes[i];
-            if (!strncmp(n->name,"l_out",5)) {
-                // printf("\t LOUT found %s\n",n->name);
-            }
-        }
-        return g;
     }
 
     struct ggml_cgraph * build_baichuan() {
