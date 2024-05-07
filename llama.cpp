@@ -6968,7 +6968,7 @@ struct llm_build_context {
         return lctx.inp_s_seq;
     }
 
-    struct ggml_cgraph * build_llama() {
+    struct ggml_cgraph * build_llama_orig() {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
 
         // mutable variable, needed during the last layer of the computation to skip unused tokens
@@ -7111,6 +7111,20 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
 
         return gf;
+    }
+
+    // debug detson xtof
+    // il reconstruit le graph a chaque token généré
+    struct ggml_cgraph * build_llama() {
+        ggml_cgraph *g = build_llama_orig();
+        // printf("detgraph %d\n",g->n_nodes);
+        for (int i=0;i<g->n_nodes;i++) {
+            ggml_tensor *n = g->nodes[i];
+            if (!strncmp(n->name,"l_out",5)) {
+                // printf("\t LOUT found %s\n",n->name);
+            }
+        }
+        return g;
     }
 
     struct ggml_cgraph * build_baichuan() {
