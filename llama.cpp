@@ -7092,15 +7092,28 @@ struct llm_build_context {
                 cur = ggml_add(ctx0, cur, layer_dir);
             }
 
+#if 1
             // detson
+            // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
             ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
-            // je ne sais pas comment set la value d'un tensor, donc je le mets à 0 comme cela:
-            //         ggml_backend_tensor_set(inp_raw, data, 0, ggml_nbytes(inp_raw));
-
-            ggml_tensor * aa = ggml_sub(ctx0, addact, addact);
-            cur = ggml_add(ctx0, cur, aa);
-            // printf("detson %d %d %d %d\n", cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
-            // printf("detsoN %d %d %d %d\n", addact->ne[0], addact->ne[1], addact->ne[2], addact->ne[3]);
+            // char ss[20];
+            // sprintf(ss,"addact%d",il);
+            // ggml_set_name(addact, ss);
+            // TODO improve it to also work on GPU
+            // ggml_backend_buffer_type_t
+            // je ne comprends pas comment ces buffers marchent: addact_buf n'est jamais utilisé et la size n'est pas indiquée, pourtant il faut le déclarer sinon ca plante avec "buffer not set" ?!
+            // peut-etre que ce alloc() check les tensors non alloues et les fix: TODO check code de ce alloc()
+            // TODO check s'il ne faut pas free() le buffer pour ne pas creer de memory leak a chaque token ??
+            ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
+            if (addact_buf == nullptr) {
+                LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
+            }
+            float *data = (float *)malloc(ggml_nbytes(addact));
+            for (int i=0;i<ggml_nbytes(addact)/sizeof(float);i++) data[i]=0.;
+            ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
+            cur = ggml_add(ctx0, cur, addact);
+            std::free(data);
+#endif
 
             cb(cur, "l_out", il);
 
