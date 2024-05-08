@@ -6658,6 +6658,7 @@ static struct ggml_tensor * llm_build_kv(
     return cur;
 }
 
+float *detaddvals = NULL;
 struct llm_build_context {
     const llama_model    & model;
           llama_context  & lctx;
@@ -7094,6 +7095,31 @@ struct llm_build_context {
 
             char *detadd = getenv("DETADD");
             if (detadd!=NULL) {
+                if (detaddvals==NULL) {
+                    int nlayers = 32;
+                    int ntoks = cur->ne[0];
+                    int vdim = cur->ne[1];
+                    detaddvals = (float *)malloc(sizeof(float)*nlayers*ntoks*vdim);
+                    int tabidx = 0;
+                    FILE *f = fopen(detadd,"r");
+                    for (int layer=0;layer<nlayers;layer++) {
+                        for (int tok=0;tok<ntoks;tok++) {
+                            char *s = f.read();
+                            int deb=0;
+                            int i=0;
+                            for (int j=0;j<vdim;j++) {
+                                while (s[i]!=' ') i++;
+                                s[i++]=0;
+                                float v=atof(s+deb);
+                                detaddvals[tabidx]=v;
+                                tabidx = tabidx + sizeof(float);
+                                s[i-1]=' ';
+                                deb=i;
+                            }
+                        }
+                    }
+                    fclose(f);
+                }
                 // detson
                 // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
                 ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
@@ -7110,7 +7136,12 @@ struct llm_build_context {
                     LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
                 }
                 float *data = (float *)malloc(ggml_nbytes(addact));
-                for (int i=0;i<ggml_nbytes(addact)/sizeof(float);i++) data[i]=0.;
+                int layer = li;
+                int ntoks = cur->ne[0];
+                int vdim = cur->ne[1];
+                for (int tok=0,j=0;tok<ntoks;tok++) {
+                    for (int i=0;i<vdim;i++) {
+                        data[j] = detaddvals[layer*ntoks*vdim+j++]
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
