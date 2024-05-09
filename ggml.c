@@ -16474,6 +16474,10 @@ static void ggml_compute_forward_cross_entropy_loss_back(
 
 /////////////////////////////////
 
+pthread_mutex_t lock;
+int islockcreated = 0;
+int nthrpassed[100];
+
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
