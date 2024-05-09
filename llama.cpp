@@ -7104,7 +7104,9 @@ struct llm_build_context {
                     FILE *f = fopen(detadd,"r");
                     for (int layer=0;layer<nlayers;layer++) {
                         for (int tok=0;tok<ntoks;tok++) {
-                            char *s = f.read();
+                            char *s=NULL;
+                            size_t n=0;
+                            getline(&s, &n, f);
                             int deb=0;
                             int i=0;
                             for (int j=0;j<vdim;j++) {
@@ -7116,6 +7118,7 @@ struct llm_build_context {
                                 s[i-1]=' ';
                                 deb=i;
                             }
+                            std::free(s);
                         }
                     }
                     fclose(f);
@@ -7136,12 +7139,14 @@ struct llm_build_context {
                     LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
                 }
                 float *data = (float *)malloc(ggml_nbytes(addact));
-                int layer = li;
+                int layer = il;
                 int ntoks = cur->ne[0];
                 int vdim = cur->ne[1];
                 for (int tok=0,j=0;tok<ntoks;tok++) {
                     for (int i=0;i<vdim;i++) {
-                        data[j] = detaddvals[layer*ntoks*vdim+j++]
+                        data[j] = detaddvals[layer*ntoks*vdim+j++];
+                    }
+                }
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
