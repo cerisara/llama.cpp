@@ -16828,6 +16828,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
     const char* detsave = getenv("DETSAVE");
     if (detsave!=NULL) {
         // TODO: replace this hack with the use of eval callbacks
+        // WARNING: we do not pass here when on CUDA !
         printf("OPnode %s\n", tensor->name);
         const char* detembed = getenv("DETEMBED");
         if (tensor->name[0]=='l' && tensor->name[1]=='_') { // l_out == last op in a layer
