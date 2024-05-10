@@ -16827,7 +16827,9 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
     }
     const char* detsave = getenv("DETSAVE");
     if (detsave!=NULL) {
+        // TODO: replace this hack with the use of eval callbacks
         printf("OPnode %s\n", tensor->name);
+        const char* detembed = getenv("DETEMBED");
         if (tensor->name[0]=='l' && tensor->name[1]=='_') { // l_out == last op in a layer
             if (islockcreated==0 && params->ith==0) {
                 // je cree le lock seulement avec le thread 0 (le lock ne sera utilise que quand tous les threads seront passes de toute maniere)
@@ -16863,7 +16865,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 fclose(f);
             }
             pthread_mutex_unlock(&lock);
-        } else if (strcmp(tensor->name,"inp_embd")==0) {
+        } else if (detembed!=NULL && strcmp(tensor->name,"inp_embd")==0) {
             int ntoks = tensor->ne[0];
             int vecdim = tensor->ne[1];
             int chanout = tensor->ne[2];
