@@ -117,6 +117,86 @@ static void llama_log_callback_logTee(ggml_log_level level, const char * text, v
     LOG_TEE("%s", text);
 }
 
+/**
+ * This the arbitrary data which will be passed to each callback.
+ * Later on we can for example add operation or tensor name filter from the CLI arg, or a file descriptor to dump the tensor.
+ */
+struct callback_data {
+    std::vector<uint8_t> data;
+};
+callback_data cb_data;
+
+static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
+    GGML_ASSERT(n > 0);
+    float sum = 0;
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) data + i);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) data + i;
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) data + i;
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) data + i;
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) data + i;
+                    } else {
+                        GGML_ASSERT(false);
+                    }
+                    // printf("%12.4f", v);
+                    // TODO: save
+                    sum += v;
+                }
+            }
+        }
+        printf("                                     sum = %f\n", sum);
+    }
+}
+
+
+/**
+ * GGML operations callback during the graph execution.
+ *
+ * @param t current tensor
+ * @param ask when ask is true, the scheduler wants to know if we are interested in data from this tensor
+ *            if we return true, a follow-up call will be made with ask=false in which we can do the actual collection.
+ *            see ggml_backend_sched_eval_callback
+ * @param user_data user data to pass at each call back
+ * @return true to receive data or continue the graph, false otherwise
+ */
+static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
+    // TODO: check called how many times per node l_out ?
+    if (strncmp(t->name,"l_out",5)) return true;
+    auto * cb_data = (callback_data *) user_data;
+    const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
+
+    if (ask) {
+        return true; // Always retrieve data
+    }
+
+    // copy the data from the GPU memory if needed
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    if (!is_host) {
+        auto n_bytes = ggml_nbytes(t);
+        cb_data->data.resize(n_bytes);
+        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+    }
+
+    if (!ggml_is_quantized(t->type)) {
+        uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+        ggml_save_tensor(data, t->type, t->ne, t->nb, 3);
+    }
+
+    // TODO
+    return true;
+}
+
 int main(int argc, char ** argv) {
     gpt_params params;
     g_params = &params;
@@ -125,6 +205,14 @@ int main(int argc, char ** argv) {
         return 1;
     }
     llama_sampling_params & sparams = params.sparams;
+
+    const char *detsave = getenv("DETSAVE");
+    if (detsave!=NULL) {
+        params.cb_eval = xtof_save;
+        params.cb_eval_user_data = &cb_data;
+        // params.warmup = false;
+    }
+
 
 #ifndef LOG_DISABLE_LOGS
     log_set_target(log_filename_generator("main", "log"));
