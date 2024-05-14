@@ -126,9 +126,11 @@ struct callback_data {
 };
 callback_data cb_data;
 
-static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
+static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n, char *nom) {
     GGML_ASSERT(n > 0);
     float sum = 0;
+    FILE *f = fopen("acts.bin","ab");
+    fprintf(f,"LAYER %s\n",nom);
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
@@ -149,11 +151,12 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
                         GGML_ASSERT(false);
                     }
                     // printf("%12.4f", v);
-                    // TODO: save
+                    fprintf(f,"%ld %ld %ld %ld %f\n",i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
+        fclose(f);
         printf("                                     sum = %f\n", sum);
     }
 }
@@ -170,7 +173,7 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
  * @return true to receive data or continue the graph, false otherwise
  */
 static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
-    // TODO: check called how many times per node l_out ?
+    // WARNING: check called how many times per node l_out ?
     if (strncmp(t->name,"l_out",5)) return true;
     auto * cb_data = (callback_data *) user_data;
     const struct ggml_tensor * src0 = t->src[0];
@@ -190,10 +193,8 @@ static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
 
     if (!ggml_is_quantized(t->type)) {
         uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-        ggml_save_tensor(data, t->type, t->ne, t->nb, 3);
+        ggml_save_tensor(data, t->type, t->ne, t->nb, 3, t->name);
     }
-
-    // TODO
     return true;
 }
 
