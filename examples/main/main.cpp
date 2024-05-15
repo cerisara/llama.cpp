@@ -126,36 +126,36 @@ struct callback_data {
 };
 callback_data cb_data;
 
-static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n, char *nom) {
-    GGML_ASSERT(n > 0);
+static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, char *nom, int detnb) {
     float sum = 0;
     FILE *f = fopen("acts.bin","ab");
-    fprintf(f,"LAYER %s\n",nom);
+    fprintf(f,"LAYER %s %ld %ld %ld %ld %ld %ld %ld %ld %ld\n",nom,ne[3],ne[2],ne[1],ne[0], detnb, nb[0],nb[1],nb[2],nb[3]);
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    // i est la position en byte ! pas en float !
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
                     if (type == GGML_TYPE_F16) {
-                        ggml_fp16_t *dd = (ggml_fp16_t *)data;
-                        v = ggml_fp16_to_fp32(dd[i]);
+                        ggml_fp16_t *dd = (ggml_fp16_t *)(data+i);
+                        v = ggml_fp16_to_fp32(dd[0]);
                         // v = ggml_fp16_to_fp32(*(ggml_fp16_t *) data + i);
                     } else if (type == GGML_TYPE_F32) {
-                        float *vv = (float *)data;
-                        v = vv[i];
+                        float *vv = (float *)(data+i);
+                        v = vv[0];
                         // v = *(float *) data + i;
                     } else if (type == GGML_TYPE_I32) {
-                        int32_t *dd = (int32_t *)data;
-                        v = (float)dd[i];
+                        int32_t *dd = (int32_t *)(data+i);
+                        v = (float)dd[0];
                         // v = (float) *(int32_t *) data + i;
                     } else if (type == GGML_TYPE_I16) {
-                        int16_t *dd = (int16_t *)data;
-                        v = (float)dd[i];
+                        int16_t *dd = (int16_t *)(data+i);
+                        v = (float)dd[0];
                         // v = (float) *(int16_t *) data + i;
                     } else if (type == GGML_TYPE_I8) {
-                        int8_t *dd = (int8_t *)data;
-                        v = (float)dd[i];
+                        int8_t *dd = (int8_t *)(data+i);
+                        v = (float)dd[0];
                         // v = (float) *(int8_t *) data + i;
                     } else {
                         GGML_ASSERT(false);
@@ -166,9 +166,10 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
                 }
             }
         }
-        fclose(f);
         printf("                                     sum = %f\n", sum);
     }
+    fprintf(f,"SUM %s %f\n",nom,sum);
+    fclose(f);
 }
 
 
@@ -203,7 +204,8 @@ static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
 
     if (!ggml_is_quantized(t->type)) {
         uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-        ggml_save_tensor(data, t->type, t->ne, t->nb, 3, t->name);
+        printf("detdebug %d %d %d\n", is_host, ggml_nbytes(t), cb_data->data.size());
+        ggml_save_tensor(data, t->type, t->ne, t->nb, t->name, ggml_nbytes(t));
     }
     return true;
 }
