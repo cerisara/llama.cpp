@@ -138,15 +138,25 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
                     if (type == GGML_TYPE_F16) {
-                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) data + i);
+                        ggml_fp16_t *dd = (ggml_fp16_t *)data;
+                        v = ggml_fp16_to_fp32(dd[i]);
+                        // v = ggml_fp16_to_fp32(*(ggml_fp16_t *) data + i);
                     } else if (type == GGML_TYPE_F32) {
-                        v = *(float *) data + i;
+                        float *vv = (float *)data;
+                        v = vv[i];
+                        // v = *(float *) data + i;
                     } else if (type == GGML_TYPE_I32) {
-                        v = (float) *(int32_t *) data + i;
+                        int32_t *dd = (int32_t *)data;
+                        v = (float)dd[i];
+                        // v = (float) *(int32_t *) data + i;
                     } else if (type == GGML_TYPE_I16) {
-                        v = (float) *(int16_t *) data + i;
+                        int16_t *dd = (int16_t *)data;
+                        v = (float)dd[i];
+                        // v = (float) *(int16_t *) data + i;
                     } else if (type == GGML_TYPE_I8) {
-                        v = (float) *(int8_t *) data + i;
+                        int8_t *dd = (int8_t *)data;
+                        v = (float)dd[i];
+                        // v = (float) *(int8_t *) data + i;
                     } else {
                         GGML_ASSERT(false);
                     }
