@@ -204,7 +204,6 @@ static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
 
     if (!ggml_is_quantized(t->type)) {
         uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-        printf("detdebug %d %d %d\n", is_host, ggml_nbytes(t), cb_data->data.size());
         ggml_save_tensor(data, t->type, t->ne, t->nb, t->name, ggml_nbytes(t));
     }
     return true;
