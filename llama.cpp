@@ -7122,6 +7122,7 @@ struct llm_build_context {
                     }
                     fclose(f);
                 }
+                
                 // detson
                 // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
                 ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
@@ -7134,6 +7135,7 @@ struct llm_build_context {
                 // peut-etre que ce alloc() check les tensors non alloues et les fix: TODO check code de ce alloc()
                 // TODO check s'il ne faut pas free() le buffer pour ne pas creer de memory leak a chaque token ??
                 ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
+                /*
                 if (addact_buf == nullptr) {
                     LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
                 }
@@ -7149,6 +7151,7 @@ struct llm_build_context {
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
+                */
             }
 
             cb(cur, "l_out", il);
