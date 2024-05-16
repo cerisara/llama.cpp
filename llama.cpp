@@ -7100,26 +7100,25 @@ struct llm_build_context {
                     int ntoks = cur->ne[0];
                     int vdim = cur->ne[1];
                     detaddvals = (float *)malloc(sizeof(float)*nlayers*ntoks*vdim);
-                    int tabidx = 0;
+                    for (int j=0;j<nlayers*ntoks*vdim;j++) detaddvals[j]=0;
                     FILE *f = fopen(detadd,"r");
-                    for (int layer=0;layer<nlayers;layer++) {
-                        for (int tok=0;tok<ntoks;tok++) {
-                            char *s=NULL;
-                            size_t n=0;
-                            getline(&s, &n, f);
-                            int deb=0;
-                            int i=0;
-                            for (int j=0;j<vdim;j++) {
-                                while (s[i]!=' ') i++;
-                                s[i++]=0;
-                                float v=atof(s+deb);
-                                detaddvals[tabidx]=v;
-                                tabidx = tabidx + sizeof(float);
-                                s[i-1]=' ';
-                                deb=i;
-                            }
-                            std::free(s);
-                        }
+                    for (;;) {
+                        char *s=NULL;
+                        size_t n=0;
+                        int r = getline(&s, &n, f);
+                        if (r<0) break;
+                        // chaque ligne contient layer" "tok" "dim" "deltafloat
+
+                        char *token = strsep(&s," ");
+                        int layer = atoi(token);
+                        token = strsep(&s," ");
+                        int tok = atoi(token);
+                        token = strsep(&s," ");
+                        int dim = atoi(token);
+                        token = strsep(&s," ");
+                        float v = atof(token);
+                        detaddvals[layer*ntoks*vdim+tok*vdim+dim]=v;
+                        std::free(s);
                     }
                     fclose(f);
                 }
