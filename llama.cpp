@@ -470,6 +470,7 @@ enum llm_tensor {
     LLM_TENSOR_SSM_A,
     LLM_TENSOR_SSM_D,
     LLM_TENSOR_SSM_OUT,
+    LLM_TENSOR_ADDACT,
 };
 
 static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
@@ -2012,6 +2013,9 @@ struct llama_layer {
     // mamba bias
     struct ggml_tensor * ssm_conv1d_b;
     struct ggml_tensor * ssm_dt_b;
+   
+    // detson bias add to activations 
+    struct ggml_tensor * addact;
 };
 
 struct llama_kv_cell {
@@ -3529,6 +3533,7 @@ struct llama_model_loader {
         std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 
         for (struct ggml_tensor * cur = ggml_get_first_tensor(ctx); cur != NULL; cur = ggml_get_next_tensor(ctx, cur)) {
+            printf("detson loading tensor %s\n",ggml_get_name(cur));
             const auto * weight = get_weight(ggml_get_name(cur));
             if (weight == nullptr) {
                 // this can happen with split experts models
@@ -4881,6 +4886,9 @@ static bool llm_load_tensors(
                         auto & layer = model.layers[i];
 
                         layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
+
+                        // detson: create addact tensor (for the last token only!)
+                        layer.addact = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ADDACT,   "bias", i), {n_embd});
 
                         layer.wq = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd});
                         layer.wk = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa});
@@ -6994,9 +7002,7 @@ struct llm_build_context {
             struct ggml_tensor * inpSA = inpL;
 
             // norm
-            cur = llm_build_norm(ctx0, inpL, hparams,
-                    model.layers[il].attn_norm, NULL,
-                    LLM_NORM_RMS, cb, il);
+            cur = llm_build_norm(ctx0, inpL, hparams, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, cb, il);
             cb(cur, "attn_norm", il);
 
             // self-attention
@@ -7094,6 +7100,7 @@ struct llm_build_context {
             }
 
             char *detadd = getenv("DETADD");
+            // TODO: il faut d'abord creer les tensors (cf.  llm_load_tensors() ) puis les utiliser ici
             if (detadd!=NULL) {
                 if (detaddvals==NULL) {
                     int nlayers = 32;
@@ -7134,8 +7141,11 @@ struct llm_build_context {
                 // je ne comprends pas comment ces buffers marchent: addact_buf n'est jamais utilisé et la size n'est pas indiquée, pourtant il faut le déclarer sinon ca plante avec "buffer not set" ?!
                 // peut-etre que ce alloc() check les tensors non alloues et les fix: TODO check code de ce alloc()
                 // TODO check s'il ne faut pas free() le buffer pour ne pas creer de memory leak a chaque token ??
-                ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
-                /*
+                // ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
+                // si on alloue sur CUDA dev=0, plante avec cuda out of memory alloc error en allouant 300MB !!?? ==> car c'est la petite carte...
+                // donc il faut allouer sur dev=1: TODO: rendre cela plus robuste !
+                // mais il plane ensuite avec un segfault
+                ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cuda_buffer_type(1));
                 if (addact_buf == nullptr) {
                     LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
                 }
@@ -7151,7 +7161,6 @@ struct llm_build_context {
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
-                */
             }
 
             cb(cur, "l_out", il);
