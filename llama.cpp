@@ -470,7 +470,6 @@ enum llm_tensor {
     LLM_TENSOR_SSM_A,
     LLM_TENSOR_SSM_D,
     LLM_TENSOR_SSM_OUT,
-    LLM_TENSOR_ADDACT,
 };
 
 static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
@@ -498,7 +497,6 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
             { LLM_TENSOR_FFN_GATE_EXPS,   "blk.%d.ffn_gate_exps" },
             { LLM_TENSOR_FFN_DOWN_EXPS,   "blk.%d.ffn_down_exps" },
             { LLM_TENSOR_FFN_UP_EXPS,     "blk.%d.ffn_up_exps" },
-            { LLM_TENSOR_ADDACT,          "blk.%d.addact" },
         },
     },
     {
@@ -2014,9 +2012,6 @@ struct llama_layer {
     // mamba bias
     struct ggml_tensor * ssm_conv1d_b;
     struct ggml_tensor * ssm_dt_b;
-   
-    // detson bias add to activations 
-    struct ggml_tensor * addact;
 };
 
 struct llama_kv_cell {
@@ -3534,7 +3529,6 @@ struct llama_model_loader {
         std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 
         for (struct ggml_tensor * cur = ggml_get_first_tensor(ctx); cur != NULL; cur = ggml_get_next_tensor(ctx, cur)) {
-            printf("detson loading tensor %s\n",ggml_get_name(cur));
             const auto * weight = get_weight(ggml_get_name(cur));
             if (weight == nullptr) {
                 // this can happen with split experts models
@@ -4887,9 +4881,6 @@ static bool llm_load_tensors(
                         auto & layer = model.layers[i];
 
                         layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
-
-                        // detson: create addact tensor (for the last token only!)
-                        layer.addact = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ADDACT,   "bias", i), {n_embd});
 
                         layer.wq = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd});
                         layer.wk = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa});
@@ -7101,9 +7092,27 @@ struct llm_build_context {
             }
 
             char *detadd = getenv("DETADD");
-            // TODO: il faut d'abord creer les tensors (cf.  llm_load_tensors() ) puis les utiliser ici
             if (detadd!=NULL) {
-                if (detaddvals==NULL) {
+                // s'inspirer de loraB: nous sommes dans la fct qui reconstruit le compute graph a chaque token
+                ggml_backend_t detbackend_cpu = ggml_backend_cpu_init();
+                ggml_backend_cpu_set_n_threads(detbackend_cpu, 1);
+                ggml_init_params detinit_params = {
+                    /* .mem_size   */ ggml_tensor_overhead()*128 + ggml_graph_overhead(),
+                    /* .mem_buffer */ nullptr,
+                    /* .no_alloc   */ true,
+                };
+                ggml_context * det_ctx = ggml_init(detinit_params);
+                ggml_tensor * addact = ggml_new_tensor_2d(det_ctx, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
+                char st[20];
+                sprintf(st,"addact%d",il); // TODO: free st
+                ggml_set_name(addact, st);
+                ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(det_ctx, ggml_backend_cpu_buffer_type());
+                // passe une 1ere fois OK sur toutes les layers, puis plante la 2eme fois a la layer 26 (/31): suggere un pb de "RAM": il faudrait free les buffers ?
+                // warning: ntoks*vdim != ggml_nbytes(addact) dans les 2 passes:
+                // pass1 = 2097152 != 8388608 ==> en fait, c'est bon, meme valeurs avec le *sizeof(float)
+                // pass2 = 8192 != 32768
+ 
+                if (false && detaddvals==NULL) {
                     int nlayers = 32;
                     int ntoks = cur->ne[0];
                     int vdim = cur->ne[1];
@@ -7130,10 +7139,24 @@ struct llm_build_context {
                     }
                     fclose(f);
                 }
+                float *data = (float *)malloc(ggml_nbytes(addact));
+                int layer = il;
+                int ntoks = cur->ne[0];
+                int vdim = cur->ne[1];
+                for (int tok=0,j=0;tok<ntoks;tok++) {
+                    for (int i=0;i<vdim;i++) {
+                        data[j] = 0;
+                        // data[j] = detaddvals[layer*ntoks*vdim+j++];
+                    }
+                }
+                printf("detset %d %d\n",ntoks*vdim, ggml_nbytes(addact));
+                ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
+                cur = ggml_add(ctx0, cur, addact);
+                std::free(data);
                 
                 // detson
                 // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
-                ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
+                // ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
                 // char ss[20];
                 // sprintf(ss,"addact%d",il);
                 // ggml_set_name(addact, ss);
@@ -7143,10 +7166,11 @@ struct llm_build_context {
                 // peut-etre que ce alloc() check les tensors non alloues et les fix: TODO check code de ce alloc()
                 // TODO check s'il ne faut pas free() le buffer pour ne pas creer de memory leak a chaque token ??
                 // ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
-                // si on alloue sur CUDA dev=0, plante avec cuda out of memory alloc error en allouant 300MB !!?? ==> car c'est la petite carte...
-                // donc il faut allouer sur dev=1: TODO: rendre cela plus robuste !
-                // mais il plane ensuite avec un segfault
-                ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cuda_buffer_type(1));
+                // si on alloue sur CUDA dev=0, plante avec cuda out of memory alloc error en allouant 300MB !!?? ==> car c'est la petite carte... ???
+                // donc il faut allouer sur dev=1 ??
+                // mais il plante ensuite avec un segfault
+                /*
+                ggml_backend_buffer_t addact_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cuda_buffer_type(0));
                 if (addact_buf == nullptr) {
                     LLAMA_LOG_ERROR("%s: error: failed to allocate addact tensors\n", __func__);
                 }
@@ -7162,13 +7186,16 @@ struct llm_build_context {
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
+                */
             }
 
             cb(cur, "l_out", il);
+            printf("detloutok %d\n",il);
 
             // input for next layer
             inpL = cur;
         }
+        printf("detalllayers\n");
 
         cur = inpL;
 
