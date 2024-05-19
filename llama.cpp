@@ -7149,11 +7149,14 @@ struct llm_build_context {
                         // data[j] = detaddvals[layer*ntoks*vdim+j++];
                     }
                 }
-                printf("detset %d %d\n",ntoks*vdim, ggml_nbytes(addact));
                 ggml_backend_tensor_set(addact, data, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
                 std::free(data);
-                
+
+                ggml_backend_buffer_free(det_buf);
+                ggml_free(det_ctx);
+                ggml_backend_free(detbackend_cpu);
+
                 // detson
                 // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
                 // ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
@@ -7190,7 +7193,6 @@ struct llm_build_context {
             }
 
             cb(cur, "l_out", il);
-            printf("detloutok %d\n",il);
 
             // input for next layer
             inpL = cur;
