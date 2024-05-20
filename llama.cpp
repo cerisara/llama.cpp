@@ -6970,6 +6970,8 @@ struct llm_build_context {
     }
 
     struct ggml_cgraph * build_llama() {
+        ggml_tensor *detaddvs[100];
+
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
 
         // mutable variable, needed during the last layer of the computation to skip unused tokens
@@ -7093,24 +7095,22 @@ struct llm_build_context {
 
             char *detadd = getenv("DETADD");
             if (detadd!=NULL) {
+            
                 // s'inspirer de loraB: nous sommes dans la fct qui reconstruit le compute graph a chaque token
-                ggml_backend_t detbackend_cpu = ggml_backend_cpu_init();
-                ggml_backend_cpu_set_n_threads(detbackend_cpu, 1);
-                ggml_init_params detinit_params = {
-                    /* .mem_size   */ ggml_tensor_overhead()*128 + ggml_graph_overhead(),
-                    /* .mem_buffer */ nullptr,
-                    /* .no_alloc   */ true,
-                };
-                ggml_context * det_ctx = ggml_init(detinit_params);
-                ggml_tensor * addact = ggml_new_tensor_2d(det_ctx, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
-                char st[20];
-                sprintf(st,"addact%d",il); // TODO: free st
-                ggml_set_name(addact, st);
-                ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(det_ctx, ggml_backend_cpu_buffer_type());
-                // passe une 1ere fois OK sur toutes les layers, puis plante la 2eme fois a la layer 26 (/31): suggere un pb de "RAM": il faudrait free les buffers ?
-                // warning: ntoks*vdim != ggml_nbytes(addact) dans les 2 passes:
-                // pass1 = 2097152 != 8388608 ==> en fait, c'est bon, meme valeurs avec le *sizeof(float)
-                // pass2 = 8192 != 32768
+                // ggml_backend_t detbackend_cpu = ggml_backend_cpu_init();
+                // ggml_backend_cpu_set_n_threads(detbackend_cpu, 1);
+                //ggml_init_params detinit_params = {
+                //    /* .mem_size   */ ggml_tensor_overhead()*128 + ggml_graph_overhead(),
+                //    /* .mem_buffer */ nullptr,
+                //    /* .no_alloc   */ true,
+                //};
+                // ggml_context * det_ctx = ggml_init(detinit_params);
+                ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
+                // char st[20];
+                // sprintf(st,"addact%d",il); // TODO: free st
+                // ggml_set_name(addact, st);
+                detaddvs[il] = addact;
+                // ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
  
                 if (false && detaddvals==NULL) {
                     int nlayers = 32;
@@ -7140,6 +7140,7 @@ struct llm_build_context {
                     fclose(f);
                 }
 
+                /*
                 int layer = il;
                 int ntoks = cur->ne[0];
                 int vdim = cur->ne[1];
@@ -7150,18 +7151,22 @@ struct llm_build_context {
                         // detdata[j] = detaddvals[layer*ntoks*vdim+j++];
                     }
                 }
-                ggml_backend_tensor_set(addact, detdata, 0, ggml_nbytes(addact));
+                */
+                // here, cur->data, cur->buffer and cur->view_src are null ! mais ctx0 a 3.5GB de mem allouee
+                // printf("detmem %d\n",ggml_get_mem_size(ctx0));
+                // ggml_backend_tensor_set(addact, detdata, 0, ggml_nbytes(addact));
+                
                 cur = ggml_add(ctx0, cur, addact);
+                cb(cur, "addact", il);
+
                 // cf line 2230 pour le free ?? il faut register nos contextes ?
                 // si je free detdata, il segfault
                 // std::free(detdata);
                 // si je ne free rien, il segfault
-                ggml_backend_buffer_free(det_buf);
-                ggml_free(det_ctx);
-                ggml_backend_free(detbackend_cpu);
+                // ggml_backend_buffer_free(det_buf);
+                // ggml_free(det_ctx);
+                // ggml_backend_free(detbackend_cpu);
 
-                // detson
-                //
                 // process pour LORA:
                 // - llama model is loaded (load_llama_model_from_file)
                 // - LORA adapters are loaded and added to the model
@@ -7222,6 +7227,12 @@ struct llm_build_context {
         cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
+
+        // il faut l'appeler apres le forward_expand ??
+        for (int i=0;i<n_layer;i++) {
+            // on ne peut pas 'set' car ctx0 est no_alloc !
+            // ggml_set_f32(detaddvs[i], 0.0f);
+        }
 
         return gf;
     }
@@ -11566,7 +11577,17 @@ static int llama_decode_internal(
         ggml_backend_sched_reset(lctx.sched);
         ggml_backend_sched_set_eval_callback(lctx.sched, lctx.cparams.cb_eval, lctx.cparams.cb_eval_user_data);
 
+        // detson: gf est un graphe sans alloc !
         ggml_cgraph * gf = llama_build_graph(lctx, u_batch, false);
+        {
+            // PB: je ne retrouve pas mes tensors !
+            // pourtant ils doivent bien etre la, car sinon, la sortie ne serait pas pourrie...
+            for (int i=0;i<gf->n_nodes;i++) {
+                ggml_tensor *t = gf->nodes[i];
+                if (t->name[0]=='a' && t->name[1]=='d')
+                    printf("detnom0 %d %s %d %d %d\n",i,t->name, t->data, t->buffer, t->view_src);
+            }
+        }
 
         // the output is always the last tensor in the graph
         struct ggml_tensor * res  = gf->nodes[gf->n_nodes - 1];
@@ -11617,7 +11638,16 @@ static int llama_decode_internal(
             n_threads = std::min(4, n_threads);
         }
 
+        // detson l'allocation du graphe se fait ici; les parametres ont ete charges avant dans model !
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
+        {
+            // TODO: charger ici mes addact !
+            for (int i=0;i<gf->n_nodes;i++) {
+                ggml_tensor *t = gf->nodes[i];
+                if (t->name[0]=='a' && t->name[1]=='d')
+                    printf("detnom %d %s %d %d %d\n",i,t->name, t->data, t->buffer, t->view_src);
+            }
+        }
 
         llama_set_inputs(lctx, u_batch);
 
