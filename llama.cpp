@@ -2991,8 +2991,6 @@ namespace GGUFMeta {
 
 using llama_buf_map = std::unordered_map<uint32_t, ggml_backend_buffer_t>;
 
-float *detdata = NULL;
-
 struct llama_model_loader {
     int n_kv      = 0;
     int n_tensors = 0;
@@ -7141,29 +7139,37 @@ struct llm_build_context {
                     }
                     fclose(f);
                 }
-                if (detdata==NULL) {
-                    detdata = (float *)malloc(10000*10000*4);
-                    for (int i=0;i<10000*10000;i++) detdata[i]=0;
-                }
+
                 int layer = il;
                 int ntoks = cur->ne[0];
                 int vdim = cur->ne[1];
-                /*
+                float *detdata = (float *)malloc(ntoks*vdim*sizeof(float));
                 for (int tok=0,j=0;tok<ntoks;tok++) {
                     for (int i=0;i<vdim;i++) {
                         detdata[j] = 0;
                         // detdata[j] = detaddvals[layer*ntoks*vdim+j++];
                     }
                 }
-                */
                 ggml_backend_tensor_set(addact, detdata, 0, ggml_nbytes(addact));
                 cur = ggml_add(ctx0, cur, addact);
+                // cf line 2230 pour le free ?? il faut register nos contextes ?
+                // si je free detdata, il segfault
                 // std::free(detdata);
+                // si je ne free rien, il segfault
                 ggml_backend_buffer_free(det_buf);
                 ggml_free(det_ctx);
                 ggml_backend_free(detbackend_cpu);
 
                 // detson
+                //
+                // process pour LORA:
+                // - llama model is loaded (load_llama_model_from_file)
+                // - LORA adapters are loaded and added to the model
+                // - for each token:
+                //   - the compute graph is created (this fct)
+                //
+                //
+                //
                 // attention: ca marche, mais il y a un memory leak !!! (RAM augmente a chaque token)
                 // ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
                 // char ss[20];
