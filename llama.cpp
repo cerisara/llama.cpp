@@ -11582,21 +11582,6 @@ static int llama_decode_internal(
 
         // detson: gf est un graphe sans alloc !
         ggml_cgraph * gf = llama_build_graph(lctx, u_batch, false);
-        {
-            printf("\n\t\t\t\tdetsonnnodes %d %d\n",gf->n_nodes, detNL);
-            printf("detbof %s\n",detaddvs[0]->name);
-            // PB: est-ce que mes nodes font bien partie du graphe ?
-            for (int i=0;i<gf->n_nodes;i++) {
-                ggml_tensor *t = gf->nodes[i];
-                if (!strncmp(t->name,"addact",6)) printf("detNAME %i %s\n",i,t->name);
-                bool isin = false;
-                for (int j=0;j<detNL;j++) {
-                    ggml_tensor *tt = detaddvs[j];
-                    if (tt==t) {isin=true; break;}
-                }
-                if (isin) printf("detisin %d %s %ld %ld %ld\n",i,t->name, t->data, t->buffer, t->view_src);
-            }
-        }
 
         // the output is always the last tensor in the graph
         struct ggml_tensor * res  = gf->nodes[gf->n_nodes - 1];
@@ -11650,11 +11635,20 @@ static int llama_decode_internal(
         // detson l'allocation du graphe se fait ici; les parametres ont ete charges avant dans model !
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
         {
-            // TODO: charger ici mes addact !
+            printf("\n\t\t\t\tdetsonnnodes %d %d\n",gf->n_nodes, detNL);
+            // PB: est-ce que mes nodes font bien partie du graphe ?
+            // OUI: ils s'appellent "ffn_out-25" (ce node est double)
             for (int i=0;i<gf->n_nodes;i++) {
                 ggml_tensor *t = gf->nodes[i];
-                if (t->name[0]=='a' && t->name[1]=='d')
-                    printf("detnom %d %s %ld %ld %ld\n",i,t->name, t->data, t->buffer, t->view_src);
+                if (!strncmp(t->name,"ffn_out",7)) {
+                    if (t->op == GGML_OP_ADD) {
+                        // ce 2eme critere permet de bien choisir mon node !
+                        // printf("detFFN %s YES %d %d %d\n",t->name, t->data, t->buffer, t->view_src);
+                        // TODO: charger ici mes addact !
+                        ggml_set_f32(t, 0.0f);
+                        // BUG: ca plante qd meme dans le set, meme si le data != null
+                    }
+                }
             }
         }
 
