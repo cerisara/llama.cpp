@@ -1,3 +1,12 @@
+
+Process:
+- chargement du model dans une structure "model"
+- creation du buffer pour stocker le futur graphe
+- a chaque token, creation du compute graph vide
+- ensuite, allocation du graphe dans le buffer
+
+---------------
+
 est-ce que c'est une bonne idee de prendre LORA comme exemple ?
 est-ce que LORA ne transforme/integre pas les poids du modele avec LORA au moment de l'init ?
 

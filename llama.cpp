@@ -6660,8 +6660,6 @@ static struct ggml_tensor * llm_build_kv(
 
 // TODO detson ne plus utiliser de var globale
 float *detaddvals = NULL;
-ggml_tensor *detaddvs[100];
-int detNL = 0;
 
 struct llm_build_context {
     const llama_model    & model;
@@ -7108,12 +7106,12 @@ struct llm_build_context {
                 //    /* .no_alloc   */ true,
                 //};
                 // ggml_context * det_ctx = ggml_init(detinit_params);
+                // detson
                 ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
-                char st[20];
-                sprintf(st,"addact%d",il); // TODO: free st
-                ggml_set_name(addact, st);
-                detaddvs[il] = addact;
-                if (il>detNL) detNL=il;
+                // ggml_set_input(addact);
+                // char st[20];
+                // sprintf(st,"addact%d",il); // TODO: free st
+                // ggml_set_name(addact, st); // deja fait dans cb()
                 // ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
  
                 if (false && detaddvals==NULL) {
@@ -7160,6 +7158,7 @@ struct llm_build_context {
                 // printf("detmem %d\n",ggml_get_mem_size(ctx0));
                 // ggml_backend_tensor_set(addact, detdata, 0, ggml_nbytes(addact));
                 
+                cb(addact, "detadd", il);
                 cur = ggml_add(ctx0, cur, addact);
 
                 // cf line 2230 pour le free ?? il faut register nos contextes ?
@@ -7230,12 +7229,6 @@ struct llm_build_context {
         cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
-
-        // il faut l'appeler apres le forward_expand ??
-        for (int i=0;i<n_layer;i++) {
-            // on ne peut pas 'set' car ctx0 est no_alloc !
-            // ggml_set_f32(detaddvs[i], 0.0f);
-        }
 
         return gf;
     }
@@ -11635,19 +11628,15 @@ static int llama_decode_internal(
         // detson l'allocation du graphe se fait ici; les parametres ont ete charges avant dans model !
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
         {
-            printf("\n\t\t\t\tdetsonnnodes %d %d\n",gf->n_nodes, detNL);
-            // PB: est-ce que mes nodes font bien partie du graphe ?
-            // OUI: ils s'appellent "ffn_out-25" (ce node est double)
             for (int i=0;i<gf->n_nodes;i++) {
                 ggml_tensor *t = gf->nodes[i];
-                if (!strncmp(t->name,"ffn_out",7)) {
-                    if (t->op == GGML_OP_ADD) {
-                        // ce 2eme critere permet de bien choisir mon node !
-                        // printf("detFFN %s YES %d %d %d\n",t->name, t->data, t->buffer, t->view_src);
-                        // TODO: charger ici mes addact !
-                        ggml_set_f32(t, 0.0f);
-                        // BUG: ca plante qd meme dans le set, meme si le data != null
-                    }
+                if (!strncmp(t->name,"l_out",5)) {
+                    t = t->src[1];
+                    // TODO: charger ici mes addact !
+                    float *tmpv = (float *)malloc(sizeof(float)*t->ne[0]*t->ne[1]);
+                    for (int j=0;j<t->ne[0]*t->ne[1];j++) tmpv[j]=0;
+                    ggml_backend_tensor_set(t, tmpv, 0, ggml_nbytes(t));
+                    std::free(tmpv);
                 }
             }
         }
