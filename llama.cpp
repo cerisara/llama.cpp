@@ -6658,7 +6658,11 @@ static struct ggml_tensor * llm_build_kv(
     return cur;
 }
 
+// TODO detson ne plus utiliser de var globale
 float *detaddvals = NULL;
+ggml_tensor *detaddvs[100];
+int detNL = 0;
+
 struct llm_build_context {
     const llama_model    & model;
           llama_context  & lctx;
@@ -6970,7 +6974,6 @@ struct llm_build_context {
     }
 
     struct ggml_cgraph * build_llama() {
-        ggml_tensor *detaddvs[100];
 
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
 
@@ -7106,10 +7109,11 @@ struct llm_build_context {
                 //};
                 // ggml_context * det_ctx = ggml_init(detinit_params);
                 ggml_tensor * addact = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, cur->ne[0], cur->ne[1]);
-                // char st[20];
-                // sprintf(st,"addact%d",il); // TODO: free st
-                // ggml_set_name(addact, st);
+                char st[20];
+                sprintf(st,"addact%d",il); // TODO: free st
+                ggml_set_name(addact, st);
                 detaddvs[il] = addact;
+                if (il>detNL) detNL=il;
                 // ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
  
                 if (false && detaddvals==NULL) {
@@ -7157,7 +7161,6 @@ struct llm_build_context {
                 // ggml_backend_tensor_set(addact, detdata, 0, ggml_nbytes(addact));
                 
                 cur = ggml_add(ctx0, cur, addact);
-                cb(cur, "addact", il);
 
                 // cf line 2230 pour le free ?? il faut register nos contextes ?
                 // si je free detdata, il segfault
@@ -11580,12 +11583,18 @@ static int llama_decode_internal(
         // detson: gf est un graphe sans alloc !
         ggml_cgraph * gf = llama_build_graph(lctx, u_batch, false);
         {
-            // PB: je ne retrouve pas mes tensors !
-            // pourtant ils doivent bien etre la, car sinon, la sortie ne serait pas pourrie...
+            printf("\n\t\t\t\tdetsonnnodes %d %d\n",gf->n_nodes, detNL);
+            printf("detbof %s\n",detaddvs[0]->name);
+            // PB: est-ce que mes nodes font bien partie du graphe ?
             for (int i=0;i<gf->n_nodes;i++) {
                 ggml_tensor *t = gf->nodes[i];
-                if (t->name[0]=='a' && t->name[1]=='d')
-                    printf("detnom0 %d %s %d %d %d\n",i,t->name, t->data, t->buffer, t->view_src);
+                if (!strncmp(t->name,"addact",6)) printf("detNAME %i %s\n",i,t->name);
+                bool isin = false;
+                for (int j=0;j<detNL;j++) {
+                    ggml_tensor *tt = detaddvs[j];
+                    if (tt==t) {isin=true; break;}
+                }
+                if (isin) printf("detisin %d %s %ld %ld %ld\n",i,t->name, t->data, t->buffer, t->view_src);
             }
         }
 
@@ -11645,7 +11654,7 @@ static int llama_decode_internal(
             for (int i=0;i<gf->n_nodes;i++) {
                 ggml_tensor *t = gf->nodes[i];
                 if (t->name[0]=='a' && t->name[1]=='d')
-                    printf("detnom %d %s %d %d %d\n",i,t->name, t->data, t->buffer, t->view_src);
+                    printf("detnom %d %s %ld %ld %ld\n",i,t->name, t->data, t->buffer, t->view_src);
             }
         }
 
