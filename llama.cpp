@@ -11625,7 +11625,7 @@ static int llama_decode_internal(
             n_threads = std::min(4, n_threads);
         }
 
-        // detson l'allocation du graphe se fait ici; les parametres ont ete charges avant dans model !
+        // detson l'allocation memoire du graphe gf se fait ici; les parametres ont ete charges avant dans model
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
         {
             for (int i=0;i<gf->n_nodes;i++) {
