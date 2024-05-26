@@ -160,13 +160,11 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
                     } else {
                         GGML_ASSERT(false);
                     }
-                    // printf("%12.4f", v);
                     fprintf(f,"%ld %ld %ld %ld %f\n",i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
-        printf("                                     sum = %f\n", sum);
     }
     fprintf(f,"SUM %s %f\n",nom,sum);
     fclose(f);
@@ -184,6 +182,8 @@ static void ggml_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne,
  * @return true to receive data or continue the graph, false otherwise
  */
 static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
+    const char *detsave = getenv("DETSAVE");
+
     // WARNING: check called how many times per node l_out ?
     if (strncmp(t->name,"l_out",5)) return true;
     auto * cb_data = (callback_data *) user_data;
@@ -196,16 +196,17 @@ static bool xtof_save(struct ggml_tensor * t, bool ask, void * user_data) {
 
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    float *detdata = NULL;
     if (!is_host) {
         auto n_bytes = ggml_nbytes(t);
-        cb_data->data.resize(n_bytes);
-        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+        detdata = (float *)malloc(n_bytes);
+        ggml_backend_tensor_get(t, detdata, 0, n_bytes);
     }
-
     if (!ggml_is_quantized(t->type)) {
-        uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+        uint8_t * data = is_host ? (uint8_t *) t->data : (uint8_t *) detdata;
         ggml_save_tensor(data, t->type, t->ne, t->nb, t->name, ggml_nbytes(t));
     }
+    if (detdata!=NULL) std::free(detdata);
     return true;
 }
 
@@ -218,10 +219,12 @@ int main(int argc, char ** argv) {
     }
     llama_sampling_params & sparams = params.sparams;
 
-    const char *detsave = getenv("DETSAVE");
-    if (detsave!=NULL) {
+    if (true) {
+        // on essaye de le faire passer tout le temps ici pour avoir les memes reponses
+        // printf("detcallbackavant %d\n",params.cb_eval);
+        // PB: avec le callback, c'est hyper lent ! ==> plutot utiliser un nouveau node dans le graphe ?!!
         params.cb_eval = xtof_save;
-        params.cb_eval_user_data = &cb_data;
+        // params.cb_eval_user_data = &cb_data;
         // params.warmup = false;
     }
 

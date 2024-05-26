@@ -16826,8 +16826,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
     }
     const char* detsave = getenv("DETSAVE");
-    if (detsave!=NULL) {
-        // TODO: replace this hack with the use of eval callbacks
+    if (false && detsave!=NULL) {
+        // this hack is replaced with the use of eval callbacks in examples/main/main.cpp
         // WARNING: we do not pass here when on CUDA !
         printf("OPnode %s\n", tensor->name);
         const char* detembed = getenv("DETEMBED");
