@@ -11650,7 +11650,9 @@ static int llama_decode_internal(
                         while ((r = getline(&s, &n, f)) != -1) {
                             // chaque ligne contient layer" "tok" "dim" "deltafloat
                             sscanf(s,"%d %d %d %f",&layer,&tok,&dim,&v);
-                            if (layer==curl) tmpv[layer*ntoks*vdim+tok*vdim+dim]=v;
+                            if (layer==curl) {
+                                tmpv[tok*vdim+dim]=v;
+                            }
                         }
                         if (s!=NULL) std::free(s);
                     }
