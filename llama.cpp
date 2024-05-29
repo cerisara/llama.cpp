@@ -11642,25 +11642,17 @@ static int llama_decode_internal(
                     for (int j=0;j<t->ne[0]*t->ne[1];j++) tmpv[j]=0;
                     // TODO: for now, reload the file for every layer; load it only once!
                     FILE *f = fopen(detadd,"r");
-                    for (;;) {
+                    {
                         char *s=NULL;
                         size_t n=0;
-                        int r = getline(&s, &n, f);
-                        if (r<0) break;
-                        // chaque ligne contient layer" "tok" "dim" "deltafloat
-
-                        char *token = strsep(&s," ");
-                        int layer = atoi(token);
-                        if (layer==curl) {
-                            token = strsep(&s," ");
-                            int tok = atoi(token);
-                            token = strsep(&s," ");
-                            int dim = atoi(token);
-                            token = strsep(&s," ");
-                            float v = atof(token);
-                            tmpv[layer*ntoks*vdim+tok*vdim+dim]=v;
+                        int r, layer, tok, dim;
+                        float v;
+                        while ((r = getline(&s, &n, f)) != -1) {
+                            // chaque ligne contient layer" "tok" "dim" "deltafloat
+                            sscanf(s,"%d %d %d %f",&layer,&tok,&dim,&v);
+                            if (layer==curl) tmpv[layer*ntoks*vdim+tok*vdim+dim]=v;
                         }
-                        std::free(s);
+                        if (s!=NULL) std::free(s);
                     }
                     fclose(f);
                     ggml_backend_tensor_set(t, tmpv, 0, ggml_nbytes(t));
