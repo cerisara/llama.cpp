@@ -1,3 +1,13 @@
+This code is a modification of the vanilla llama.cpp that adds the following 2 functionalities:
+
+1- save all activations (set env var DETSAVE=1)
+2- edit some activations during the forward pass (set env var DETADD=path to filename)
+
+For the latter, the filename is a text file that should be created before calling llama.cpp and for which
+each line contains 3 int and 1 float for respectively: layer token dim bias2add
+For the former, the activations are saved in the text file ./acts.bin (see format in all.py)
+
+----------
 
 Process:
 - chargement du model dans une structure "model"
