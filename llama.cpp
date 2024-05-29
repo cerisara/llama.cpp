@@ -7115,6 +7115,7 @@ struct llm_build_context {
                 // ggml_backend_buffer_t det_buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx0, ggml_backend_cpu_buffer_type());
  
                 if (false && detaddvals==NULL) {
+                    // il ne faut pas charger ici, mais apres que le graphe soit alloue dans le buffer!
                     int nlayers = 32;
                     int ntoks = cur->ne[0];
                     int vdim = cur->ne[1];
@@ -11627,14 +11628,41 @@ static int llama_decode_internal(
 
         // detson l'allocation memoire du graphe gf se fait ici; les parametres ont ete charges avant dans model
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
-        {
+        char *detadd = getenv("DETADD");
+        if (detadd!=NULL) {
             for (int i=0;i<gf->n_nodes;i++) {
                 ggml_tensor *t = gf->nodes[i];
                 if (!strncmp(t->name,"l_out",5)) {
+                    char *ccc = t->name; ccc = ccc+6;
+                    int curl = atoi(ccc);
                     t = t->src[1];
-                    // TODO: charger ici mes addact !
                     float *tmpv = (float *)malloc(sizeof(float)*t->ne[0]*t->ne[1]);
+                    int ntoks = t->ne[0];
+                    int vdim = t->ne[1];
                     for (int j=0;j<t->ne[0]*t->ne[1];j++) tmpv[j]=0;
+                    // TODO: for now, reload the file for every layer; load it only once!
+                    FILE *f = fopen(detadd,"r");
+                    for (;;) {
+                        char *s=NULL;
+                        size_t n=0;
+                        int r = getline(&s, &n, f);
+                        if (r<0) break;
+                        // chaque ligne contient layer" "tok" "dim" "deltafloat
+
+                        char *token = strsep(&s," ");
+                        int layer = atoi(token);
+                        if (layer==curl) {
+                            token = strsep(&s," ");
+                            int tok = atoi(token);
+                            token = strsep(&s," ");
+                            int dim = atoi(token);
+                            token = strsep(&s," ");
+                            float v = atof(token);
+                            tmpv[layer*ntoks*vdim+tok*vdim+dim]=v;
+                        }
+                        std::free(s);
+                    }
+                    fclose(f);
                     ggml_backend_tensor_set(t, tmpv, 0, ggml_nbytes(t));
                     std::free(tmpv);
                 }
