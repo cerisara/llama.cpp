@@ -11636,10 +11636,10 @@ static int llama_decode_internal(
                     char *ccc = t->name; ccc = ccc+6;
                     int curl = atoi(ccc);
                     t = t->src[1];
-                    float *tmpv = (float *)malloc(sizeof(float)*t->ne[0]*t->ne[1]);
-                    int ntoks = t->ne[0];
-                    int vdim = t->ne[1];
-                    for (int j=0;j<t->ne[0]*t->ne[1];j++) tmpv[j]=0;
+                    int ntoks = t->ne[1];
+                    int vdim = t->ne[0];
+                    float *tmpv = (float *)malloc(sizeof(float)*ntoks*vdim);
+                    for (int j=0;j<ntoks*vdim;j++) tmpv[j]=0;
                     // TODO: for now, reload the file for every layer; load it only once!
                     FILE *f = fopen(detadd,"r");
                     {
@@ -11651,6 +11651,7 @@ static int llama_decode_internal(
                             // chaque ligne contient layer" "tok" "dim" "deltafloat
                             sscanf(s,"%d %d %d %f",&layer,&tok,&dim,&v);
                             if (layer==curl) {
+                                if (tok>=ntoks || dim>=vdim) printf("DETERROR %d %d %d %d\n",tok,ntoks,dim,vdim);
                                 tmpv[tok*vdim+dim]=v;
                             }
                         }
