@@ -11640,24 +11640,27 @@ static int llama_decode_internal(
                     int vdim = t->ne[0];
                     float *tmpv = (float *)malloc(sizeof(float)*ntoks*vdim);
                     for (int j=0;j<ntoks*vdim;j++) tmpv[j]=0;
-                    // TODO: for now, reload the file for every layer; load it only once!
-                    FILE *f = fopen(detadd,"r");
-                    {
-                        char *s=NULL;
-                        size_t n=0;
-                        int r, layer, tok, dim;
-                        float v;
-                        while ((r = getline(&s, &n, f)) != -1) {
-                            // chaque ligne contient layer" "tok" "dim" "deltafloat
-                            sscanf(s,"%d %d %d %f",&layer,&tok,&dim,&v);
-                            if (layer==curl) {
-                                if (tok>=ntoks || dim>=vdim) printf("DETERROR %d %d %d %d\n",tok,ntoks,dim,vdim);
-                                tmpv[tok*vdim+dim]=v;
+                    if (ntoks>4) {
+                        // the detadd file has been created only for the 1st real forward pass with all context
+                        // TODO: for now, reload the file for every layer; load it only once!
+                        FILE *f = fopen(detadd,"r");
+                        {
+                            char *s=NULL;
+                            size_t n=0;
+                            int r, layer, tok, dim;
+                            float v;
+                            while ((r = getline(&s, &n, f)) != -1) {
+                                // chaque ligne contient layer" "tok" "dim" "deltafloat
+                                sscanf(s,"%d %d %d %f",&layer,&tok,&dim,&v);
+                                if (layer==curl) {
+                                    if (tok>=ntoks || dim>=vdim) printf("DETERROR %d %d %d %d\n",tok,ntoks,dim,vdim);
+                                    tmpv[tok*vdim+dim]=v;
+                                }
                             }
+                            if (s!=NULL) std::free(s);
                         }
-                        if (s!=NULL) std::free(s);
+                        fclose(f);
                     }
-                    fclose(f);
                     ggml_backend_tensor_set(t, tmpv, 0, ggml_nbytes(t));
                     std::free(tmpv);
                 }
