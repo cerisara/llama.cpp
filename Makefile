@@ -1,5 +1,6 @@
 # Define the default target now so that it is always the first target
 BUILD_TARGETS = \
+	xtofmini \
 	libllava.a \
 	llama-baby-llama \
 	llama-batched \
@@ -1354,6 +1355,11 @@ common/build-info.o: common/build-info.cpp
 #
 
 tests: $(TEST_TARGETS)
+
+xtofmini: src/xtofmini.cpp \
+	$(OBJ_GGML) common/build-info.o
+	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 llama-benchmark-matmult: examples/benchmark/benchmark-matmult.cpp \
 	$(OBJ_GGML) common/build-info.o
