@@ -68,6 +68,13 @@ static void print_usage(int /*argc*/, char ** argv, struct benchmark_params_stru
     fprintf(stderr, "\n");
 }
 
+void xtoffun(struct ggml_tensor *a, const struct ggml_tensor *b) {
+    printf("==============================================TOTO\n");
+    TENSOR_DUMP(a);
+    printf("==============================================TOTU\n");
+    TENSOR_DUMP(b);
+}
+
 int main(int argc, char ** argv)  {
     struct benchmark_params_struct benchmark_params;
     benchmark_params.n_threads = 1;
@@ -124,9 +131,12 @@ int main(int argc, char ** argv)  {
     printf("Creating new tensor m11xm2\n");
     struct ggml_tensor * m11xm2 = ggml_mul_mat(ctx, m11, m2);
 
+    // ggml_custom1_op_f32_t 
+    struct ggml_tensor * xx = ggml_map_custom1_inplace_f32(ctx, m11xm2, &xtoffun);
+
     printf("Creating compute graph\n");
     struct ggml_cgraph * gf = ggml_new_graph(ctx);
-    ggml_build_forward_expand(gf, m11xm2);
+    ggml_build_forward_expand(gf, xx);
 
     TENSOR_DUMP(m11);
     TENSOR_DUMP(m2);
