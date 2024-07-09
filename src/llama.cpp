@@ -7754,6 +7754,42 @@ static struct ggml_tensor * llm_build_kv(
     return cur;
 }
 
+// detson
+static float tensor_sum_elements(const ggml_tensor * tensor) {
+    double sum = 0;
+    if (tensor->type == GGML_TYPE_F32) {
+        for (int j = 0; j < tensor->ne[1]; j++) {
+            for (int k = 0; k < tensor->ne[0]; k++) {
+                sum += ((float *) tensor->data)[j*tensor->ne[0] + k];
+            }
+        }
+    }
+    return sum;
+}
+static void tensor_dump(const ggml_tensor * tensor, const char * name) {
+    printf("\nDETTENSOR %15s: type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi) - ", name,
+        tensor->type, ggml_type_name(tensor->type),
+        tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->nb[0], tensor->nb[1], tensor->nb[2]);
+    float sum = tensor_sum_elements(tensor);
+    printf("Sum of tensor %s is %6.2f\n", name, sum);
+    if (tensor->type == GGML_TYPE_F32) {
+        FILE *f=fopen("acts.bin","ab");
+        float *tt = (float *) tensor->data;
+        int a=(int)tensor->ne[0];
+        fwrite(&a, sizeof(int), 1, f);
+        a=(int)tensor->ne[1];
+        fwrite(&a, sizeof(int), 1, f);
+        fwrite(tt, sizeof(float), tensor->ne[1]*tensor->ne[0], f);
+        fclose(f);
+    } else printf("NOTF32\n");
+}
+#define TENSOR_DUMP(tensor) tensor_dump(tensor, #tensor)
+void xtoffun(struct ggml_tensor *a, const struct ggml_tensor *b) {
+    TENSOR_DUMP(a);
+    TENSOR_DUMP(b);
+}
+
+
 struct llm_build_context {
     const llama_model    & model;
           llama_context  & lctx;
@@ -9868,6 +9904,8 @@ struct llm_build_context {
 
             cur = ggml_add(ctx0, cur, ffn_inp);
             cur = lctx.cvec.apply_to(ctx0, cur, il);
+            // detson custom node to save activations
+            cur = ggml_map_custom1_inplace_f32(ctx0, cur, &xtoffun);
             cb(cur, "l_out", il);
 
             // input for next layer
@@ -12518,6 +12556,7 @@ struct llm_build_context {
         return gf;
     }
 };
+
 
 static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
     llama_batch dummy;
