@@ -9904,8 +9904,10 @@ struct llm_build_context {
 
             cur = ggml_add(ctx0, cur, ffn_inp);
             cur = lctx.cvec.apply_to(ctx0, cur, il);
-            // detson custom node to save activations
-            cur = ggml_map_custom1_inplace_f32(ctx0, cur, &xtoffun);
+            if (getenv("DETACTS")) {
+                // detson custom node to save activations
+                cur = ggml_map_custom1_inplace_f32(ctx0, cur, &xtoffun);
+            }
             cb(cur, "l_out", il);
 
             // input for next layer
