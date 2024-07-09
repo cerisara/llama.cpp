@@ -44,11 +44,21 @@ static float tensor_sum_elements(const ggml_tensor * tensor) {
 }
 
 static void tensor_dump(const ggml_tensor * tensor, const char * name) {
-    printf("%15s: type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi) - ", name,
+    printf("DETTENSOR %15s: type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi) - ", name,
         tensor->type, ggml_type_name(tensor->type),
         tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->nb[0], tensor->nb[1], tensor->nb[2]);
     float sum = tensor_sum_elements(tensor);
     printf("Sum of tensor %s is %6.2f\n", name, sum);
+    if (tensor->type == GGML_TYPE_F32) {
+        FILE *f=fopen("acts.bin","ab");
+        float *tt = (float *) tensor->data;
+        int a=(int)tensor->ne[0];
+        fwrite(&a, sizeof(int), 1, f);
+        a=(int)tensor->ne[1];
+        fwrite(&a, sizeof(int), 1, f);
+        fwrite(tt, sizeof(float), tensor->ne[1]*tensor->ne[0], f);
+        fclose(f);
+    } else printf("NOTF32\n");
 }
 
 #define TENSOR_DUMP(tensor) tensor_dump(tensor, #tensor)
@@ -138,12 +148,9 @@ int main(int argc, char ** argv)  {
     struct ggml_cgraph * gf = ggml_new_graph(ctx);
     ggml_build_forward_expand(gf, xx);
 
-    TENSOR_DUMP(m11);
-    TENSOR_DUMP(m2);
-
     std::vector<uint8_t> work_buffer;
 
     ggml_graph_compute_helper(work_buffer, gf, benchmark_params.n_threads);
 
-    TENSOR_DUMP(gf->nodes[0]);
+    // TENSOR_DUMP(gf->nodes[0]);
 }
