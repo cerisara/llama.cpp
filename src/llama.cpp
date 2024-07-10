@@ -7767,7 +7767,7 @@ static float tensor_sum_elements(const ggml_tensor * tensor) {
     return sum;
 }
 static void tensor_dump(const ggml_tensor * tensor, const char * name) {
-    printf("\nDETTENSOR %15s: type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi) - ", name,
+    printf("\nDETTENSOR %15s %s: type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi) - ", name, tensor->name,
         tensor->type, ggml_type_name(tensor->type),
         tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->nb[0], tensor->nb[1], tensor->nb[2]);
     float sum = tensor_sum_elements(tensor);
@@ -7785,8 +7785,8 @@ static void tensor_dump(const ggml_tensor * tensor, const char * name) {
 }
 #define TENSOR_DUMP(tensor) tensor_dump(tensor, #tensor)
 void xtoffun(struct ggml_tensor *a, const struct ggml_tensor *b) {
+    // a and b are same tensor, a is the l_out-79 node
     TENSOR_DUMP(a);
-    TENSOR_DUMP(b);
 }
 
 
