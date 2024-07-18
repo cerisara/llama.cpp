@@ -7767,28 +7767,19 @@ static float tensor_sum_elements(const ggml_tensor * tensor) {
     return sum;
 }
 static void tensor_dump(const ggml_tensor * tensor, const char * name) {
-    printf("deta\n");
     if (tensor->type == GGML_TYPE_F32) {
         float sum = tensor_sum_elements(tensor);
-    printf("detb\n");
         FILE *f=fopen("acts.bin","ab");
         printf("\nDETTENSOR %15s %s: ftell = %ld type = %i (%5s) ne = %5" PRIi64 " x %5" PRIi64 " x %5" PRIi64 ", nb = (%5zi, %5zi, %5zi), sum %f - ", 
                 name, tensor->name, ftell(f),
                 tensor->type, ggml_type_name(tensor->type),
                 tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->nb[0], tensor->nb[1], tensor->nb[2], sum);
-    printf("detc\n");
         float *tt = (float *) tensor->data;
-    printf("detd\n");
         int a=(int)tensor->ne[0];
-    printf("dete\n");
         fwrite(&a, sizeof(int), 1, f);
-    printf("detf\n");
         a=(int)tensor->ne[1];
-    printf("detg\n");
         fwrite(&a, sizeof(int), 1, f);
-    printf("deth\n");
         fwrite(tt, sizeof(float), tensor->ne[1]*tensor->ne[0], f);
-    printf("deti\n");
         fclose(f);
     } else printf("NOTF32\n");
 }
