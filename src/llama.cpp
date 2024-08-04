@@ -2548,6 +2548,17 @@ struct llama_control_vector {
     struct ggml_tensor * apply_to(struct ggml_context * ctx, struct ggml_tensor * cur, int  il) const {
         ggml_tensor * layer_dir = tensor_for(il);
         if (layer_dir != nullptr) {
+            // le vecteur des activations cur a pour dims 32x4096, layer_dir == 1x4096
+            // donc ggml_add ajoute a toutes les rows le meme vecteur (broadcast over first dim)
+            if (getenv("DET1HOT")) {
+                // matmul (outer product) entre layer_dir (1D) et un 1-hot vector
+                int hotidx = atoi(getenv("DET1HOT"));
+                if (hotidx<cur->ne[1]) {
+                    ggml_tensor * timestep = tensors[0];
+                    timestep = ggml_pad(ctx, timestep, cur->ne[1]-hotidx, 0, 0, 0);
+                    layer_dir = ggml_out_prod(ctx, layer_dir, timestep);
+                }
+            }
             cur = ggml_add(ctx, cur, layer_dir);
         }
         return cur;
@@ -8828,7 +8839,12 @@ struct llm_build_context {
             cur = ggml_add(ctx0, cur, ffn_inp);
             cb(cur, "ffn_out", il);
 
-            cur = lctx.cvec.apply_to(ctx0, cur, il);
+            // lorsqu'il genere le 1er token de la reponse, cur==activations a pour dim (ntoks,vdim)
+            // ensuite, lorsqu'il genere les tokens suivants, cur == (1,vdim)
+            // dans mon approche, il ne faut appliquer le cvec que avant de generer le 1er token,
+            // donc lorsque cur->ne[1]>2 et j'ai alors les timesteps dans cur
+            if (true || cur->ne[1]>2)
+                cur = lctx.cvec.apply_to(ctx0, cur, il);
             cb(cur, "l_out", il);
 
             // input for next layer
@@ -17089,7 +17105,15 @@ static bool llama_control_vector_init(struct llama_control_vector & cvec, const 
 
     // make tensors
     cvec.tensors.reserve(model.hparams.n_layer);
-    cvec.tensors.push_back(nullptr); // there's never a tensor for layer 0
+
+    if (getenv("DET1HOT")) {
+        int onehot = atoi(getenv("DET1HOT"));
+        // put the onehot vector as the first bias (the place is free because there's no bias at first layer)
+        struct ggml_context * ctx = ctx_map.at(model.buft_layer[0].buft);
+        // I give this vector the minimum size (up to the 1): it'll be padded in the graph to the actual nb of timesteps
+        cvec.tensors.push_back(ggml_new_tensor_1d(ctx, GGML_TYPE_F32, onehot));
+    } else
+        cvec.tensors.push_back(nullptr); // there's never a tensor for layer 0
     for (size_t il = 1; il < model.hparams.n_layer; il++) {
         struct ggml_context * ctx = ctx_map.at(model.buft_layer[il].buft);
         ggml_tensor * tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, model.hparams.n_embd);
@@ -17112,12 +17136,21 @@ static bool llama_control_vector_init(struct llama_control_vector & cvec, const 
         cvec.bufs.push_back(buf);
     }
 
+    if (getenv("DET1HOT")) {
+        int onehot = atoi(getenv("DET1HOT"));
+        ggml_set_zero(cvec.tensors[0]);
+        ggml_set_f32_1d(cvec.tensors[0], onehot, 1.0f);
+    }
+
     return true;
 }
 
 int32_t llama_control_vector_apply(struct llama_context * lctx, const float * data, size_t len, int32_t n_embd, int32_t il_start, int32_t il_end) {
     const llama_model & model = lctx->model;
     llama_control_vector & cvec = lctx->cvec;
+
+    // n_embd = vdim
+    printf("applycvec %d %d\n",len,n_embd);
 
     if (data == nullptr) {
         // disable the current control vector (but leave allocated for later)

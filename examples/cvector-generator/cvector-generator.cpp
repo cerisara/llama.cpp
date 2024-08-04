@@ -95,14 +95,21 @@ struct callback_data {
     // all zero rows in the diff tensor will also be removed
     // NOTE: final layer is ignored. we only have (n_layers - 1) to process
     std::vector<struct ggml_tensor *> calc_diff() {
-        for (float il = 0; il < v_pos.size(); il++) {
+        int actengtime = -1;
+        if (getenv("ACTENGTIME")) actengtime=atoi(getenv("ACTENGTIME"));
+        for (int il = 0; il < v_pos.size(); il++) { // for each layer
             float * a = (float *) v_pos[il]->data;
             float * b = (float *) v_neg[il]->data;
             size_t n_elem = ggml_nelements(v_pos[il]);
+            size_t n_elem2 = ggml_nelements(v_neg[il]);
             for (size_t j = 0; j < n_elem; j++) {
                 a[j] -= b[j];
             }
-            //print_debug_tensor(v_pos[i]);
+            if (actengtime>0) {
+                for (size_t j = 0; j < n_elem; j++) {
+                    printf("actengtime %d %d %d %f %f\n",il,actengtime,j,a[j],b[j]);
+                }
+            }
             auto diff_filtered = filter_nonzero_rows(v_pos[il]);
             v_diff_filtered.push_back(diff_filtered);
         }
@@ -216,6 +223,9 @@ struct train_context {
         GGML_ASSERT((int) diff_filtered.size() == n_layers - 1);
         for (int il = 0; il < n_layers - 1; il++) {
             auto t = diff_filtered[il];
+            // ne0 = vdim
+            // ne1 = T
+            printf("detdbug %d %d %d %d %d %d %d %d %d\n",il,t->ne[0],t->ne[1],t->ne[2],t->ne[3],t->nb[0],t->nb[1],t->nb[2],t->nb[3]);
             auto & diff_tmp = v_diff_tmp[il];
             size_t curr_size = diff_tmp.size();
             diff_tmp.resize(curr_size + ggml_nbytes(t));
@@ -455,10 +465,12 @@ int main(int argc, char ** argv) {
             (int) t.max_seq_len);
 
         cb_data.is_eval_pos = true;
+        printf("dettokenpos %d\n",t.tokens_pos.size());
         success = get_hidden_layers(ctx, t.tokens_pos);
         if (!success) break;
 
         cb_data.is_eval_pos = false;
+        printf("dettokenneg %d\n",t.tokens_neg.size());
         success = get_hidden_layers(ctx, t.tokens_neg);
         if (!success) break;
 
