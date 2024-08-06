@@ -294,7 +294,10 @@ struct tokenized_prompt {
         std::vector<llama_token> pad_tokens = ::llama_tokenize(ctx, " ", false);
         llama_token pad_tok = pad_tokens.back();
         while (tokens.size() < len) {
-            tokens.push_back(pad_tok);
+            // CC xtof: I want to pad at the start!
+            // tokens.push_back(pad_tok);
+            auto it = tokens.begin();
+            tokens.insert(it,pad_tok);
         }
     }
 };
