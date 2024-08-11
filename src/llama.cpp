@@ -2559,7 +2559,7 @@ struct llama_control_vector {
                     // pad this partial 1-hot vector to a full 1-hot vector [0 ... 0 1 0 ... 0]
                     timestep = ggml_pad(ctx, timestep, cur->ne[1]-hotidx, 0, 0, 0);
                     layer_dir = ggml_out_prod(ctx, layer_dir, timestep);
-                    printf("detson expanding control vector to %d %d\n",layer_dir->ne[0], layer_dir->ne[1]);
+                    // printf("detson expanding control vector to %d %d\n",layer_dir->ne[0], layer_dir->ne[1]);
                 } else {
                     // after the 1st generated token, the next ones have only ne[1]==1
                 }
