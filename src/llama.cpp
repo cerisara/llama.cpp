@@ -2551,12 +2551,17 @@ struct llama_control_vector {
             // le vecteur des activations cur a pour dims 32x4096, layer_dir == 1x4096
             // donc ggml_add ajoute a toutes les rows le meme vecteur (broadcast over first dim)
             if (getenv("DET1HOT")) {
-                // matmul (outer product) entre layer_dir (1D) et un 1-hot vector
+                // matmul (outer product) entre layer_dir (1D) et un 1-hot vector pour construire un tensor 2D (au lieu de broadcast)
                 int hotidx = atoi(getenv("DET1HOT"));
                 if (hotidx<cur->ne[1]) {
+                    // the first layer does not have any bias: so this place is actually occupied by a partial 1-hot vector [0 ... 0 1] with a 1 at the target timestep
                     ggml_tensor * timestep = tensors[0];
+                    // pad this partial 1-hot vector to a full 1-hot vector [0 ... 0 1 0 ... 0]
                     timestep = ggml_pad(ctx, timestep, cur->ne[1]-hotidx, 0, 0, 0);
                     layer_dir = ggml_out_prod(ctx, layer_dir, timestep);
+                    printf("detson expanding control vector to %d %d\n",layer_dir->ne[0], layer_dir->ne[1]);
+                } else {
+                    // after the 1st generated token, the next ones have only ne[1]==1
                 }
             }
             cur = ggml_add(ctx, cur, layer_dir);
@@ -17139,7 +17144,8 @@ static bool llama_control_vector_init(struct llama_control_vector & cvec, const 
     if (getenv("DET1HOT")) {
         int onehot = atoi(getenv("DET1HOT"));
         ggml_set_zero(cvec.tensors[0]);
-        ggml_set_f32_1d(cvec.tensors[0], onehot, 1.0f);
+        ggml_set_f32_1d(cvec.tensors[0], onehot-1, 1.0f);
+        printf("detcontrol set 1hotv %d %d %d %f %f\n", cvec.tensors[0]->ne[0],cvec.tensors[0]->ne[1], onehot, ggml_get_f32_1d(cvec.tensors[0],onehot-2),ggml_get_f32_1d(cvec.tensors[0],onehot-1));
     }
 
     return true;
@@ -17151,6 +17157,7 @@ int32_t llama_control_vector_apply(struct llama_context * lctx, const float * da
 
     // n_embd = vdim
     printf("applycvec %d %d\n",len,n_embd);
+    printf("nembd %d %d\n",n_embd,(int) model.hparams.n_embd);
 
     if (data == nullptr) {
         // disable the current control vector (but leave allocated for later)
