@@ -244,6 +244,8 @@
 #define GGML_EXIT_SUCCESS 0
 #define GGML_EXIT_ABORTED 1
 
+#define GGML_ROPE_TYPE_NEOX 2
+
 #define GGUF_MAGIC "GGUF"
 
 #define GGUF_VERSION 3
@@ -349,6 +351,7 @@ extern "C" {
     GGML_API ggml_bf16_t ggml_fp32_to_bf16(float);
     GGML_API float       ggml_bf16_to_fp32(ggml_bf16_t);  // consider just doing << 16
     GGML_API void        ggml_bf16_to_fp32_row(const ggml_bf16_t *, float *, int64_t);
+    GGML_API void        ggml_fp32_to_bf16_row_ref(const float *, ggml_bf16_t *, int64_t);
     GGML_API void        ggml_fp32_to_bf16_row(const float *, ggml_bf16_t *, int64_t);
 
     struct ggml_object;
@@ -1139,16 +1142,17 @@ extern "C" {
 
     // group normalize along ne0*ne1*n_groups
     // used in stable-diffusion
-    // TODO: eps is hardcoded to 1e-6 for now
     GGML_API struct ggml_tensor * ggml_group_norm(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
-            int                   n_groups);
+            int                   n_groups,
+            float                 eps);
 
     GGML_API struct ggml_tensor * ggml_group_norm_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
-            int                   n_groups);
+            int                   n_groups,
+            float                 eps);
 
     // a - x
     // b - dy
@@ -1451,11 +1455,10 @@ extern "C" {
             struct ggml_tensor  * b);
 
     // rotary position embedding
-    // if mode & 1 == 1, skip n_past elements (NOT SUPPORTED)
-    // if mode & 2 == 1, GPT-NeoX style
+    // if (mode & 1) - skip n_past elements (NOT SUPPORTED)
+    // if (mode & GGML_ROPE_TYPE_NEOX) - GPT-NeoX style
     //
     // b is an int32 vector with size a->ne[2], it contains the positions
-    // c is freq factors (e.g. phi3-128k), (optional)
     GGML_API struct ggml_tensor * ggml_rope(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -1472,6 +1475,7 @@ extern "C" {
             int                   mode);
 
     // custom RoPE
+    // c is freq factors (e.g. phi3-128k), (optional)
     GGML_API struct ggml_tensor * ggml_rope_ext(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
