@@ -28,22 +28,12 @@ static std::string ggml_ne_string(const ggml_tensor * t) {
     return str;
 }
 
-static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
-    GGML_ASSERT(n > 0);
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
     float sum = 0;
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-            if (i2 == n && ne[2] > 2*n) {
-                i2 = ne[2] - n;
-            }
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
-                if (i1 == n && ne[1] > 2*n) {
-                    i1 = ne[1] - n;
-                }
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) {
-                    if (i0 == n && ne[0] > 2*n) {
-                        i0 = ne[0] - n;
-                    }
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
                     if (type == GGML_TYPE_F16) {
@@ -61,8 +51,9 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     }
                     if (sum==0) {
                         // just print the first value
-                        printf("detson %f\n",v);
+                        printf("detson %d %f\n",curlayer,v);
                     }
+                    printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
@@ -165,8 +156,9 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     if (!ggml_is_quantized(t->type)) {
         if (!strncmp(t->name,"l_out",5)) {
             printf("detson save %s\n",t->name);
+            int curlay = atoi(t->name+6);
             uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-            detson_save_tensor(data, t->type, t->ne, t->nb, 3);
+            detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
         }
     }
 
