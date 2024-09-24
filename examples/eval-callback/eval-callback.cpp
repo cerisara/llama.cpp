@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <string>
+#include <cstring>
 #include <vector>
 
 /**
@@ -25,6 +26,48 @@ static std::string ggml_ne_string(const ggml_tensor * t) {
         }
     }
     return str;
+}
+
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
+    GGML_ASSERT(n > 0);
+    float sum = 0;
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+            if (i2 == n && ne[2] > 2*n) {
+                i2 = ne[2] - n;
+            }
+            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+                if (i1 == n && ne[1] > 2*n) {
+                    i1 = ne[1] - n;
+                }
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    if (i0 == n && ne[0] > 2*n) {
+                        i0 = ne[0] - n;
+                    }
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) &data[i];
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) &data[i];
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) &data[i];
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) &data[i];
+                    } else {
+                        GGML_ABORT("fatal error");
+                    }
+                    if (sum==0) {
+                        // just print the first value
+                        printf("detson %f\n",v);
+                    }
+                    sum += v;
+                }
+            }
+        }
+    }
 }
 
 static void ggml_print_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
@@ -102,12 +145,13 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         snprintf(src1_str, sizeof(src1_str), "%s{%s}", src1->name, ggml_ne_string(src1).c_str());
     }
 
+    /*
     LOG("%s: %24s = (%s) %10s(%s{%s}, %s}) = {%s}\n", __func__,
          t->name, ggml_type_name(t->type), ggml_op_desc(t),
          src0->name, ggml_ne_string(src0).c_str(),
          src1 ? src1_str : "",
          ggml_ne_string(t).c_str());
-
+         */
 
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);
@@ -119,8 +163,11 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     }
 
     if (!ggml_is_quantized(t->type)) {
-        uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-        ggml_print_tensor(data, t->type, t->ne, t->nb, 3);
+        if (!strncmp(t->name,"l_out",5)) {
+            printf("detson save %s\n",t->name);
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            detson_save_tensor(data, t->type, t->ne, t->nb, 3);
+        }
     }
 
     return true;
