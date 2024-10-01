@@ -34,19 +34,29 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    printf("detdbug4 %d %d %d %d %d\n",i0,i1,i2,i3, type);
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
                     if (type == GGML_TYPE_F16) {
                         v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
                     } else if (type == GGML_TYPE_F32) {
+                        printf("detdbug5551\n");
                         v = *(float *) &data[i];
                     } else if (type == GGML_TYPE_I32) {
+                        printf("detdbug5552\n");
                         v = (float) *(int32_t *) &data[i];
                     } else if (type == GGML_TYPE_I16) {
+                        printf("detdbug5553\n");
                         v = (float) *(int16_t *) &data[i];
                     } else if (type == GGML_TYPE_I8) {
+                        printf("detdbug5554\n");
                         v = (float) *(int8_t *) &data[i];
                     } else {
+                        printf("detdbug5555\n");
+                        /* TODO: required to print embeddings!
+                        ggml_to_float_t const dequantize_row_q = type_traits[type].to_float;
+                        dequantize_row_q(src0_row, wdata, ne00);
+                        */
                         GGML_ABORT("fatal error");
                     }
                     if (sum==0) {
@@ -152,7 +162,25 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         cb_data->data.resize(n_bytes);
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
     }
-
+    
+    printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+    if (!strncmp(t->name,"result_output",13)) {
+        // tt = full embedding matrix
+        struct ggml_tensor *tt = t->src[0];
+        printf("detsonlayerprev %s %s %d %d %d %d\n",tt->name, ggml_op_desc(tt), tt->ne[0], tt->ne[1], tt->ne[2], tt->ne[3]);
+        const bool is_host = ggml_backend_buffer_is_host(tt->buffer);
+        printf("detdbug1 %d\n",is_host);
+        if (!is_host) {
+            auto n_bytes = ggml_nbytes(tt);
+            cb_data->data.resize(n_bytes);
+            ggml_backend_tensor_get(tt, cb_data->data.data(), 0, n_bytes);
+        }
+        printf("detdbug2 %d\n",is_host);
+        uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
+        printf("detdbug3 %d\n",data);
+        detson_save_tensor(data, tt->type, tt->ne, tt->nb, -1);
+        printf("detdbug4\n");
+    }
     if (!ggml_is_quantized(t->type)) {
         if (!strncmp(t->name,"l_out",5)) {
             printf("detson save %s\n",t->name);
