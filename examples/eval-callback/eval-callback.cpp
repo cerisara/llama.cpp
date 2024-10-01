@@ -169,8 +169,12 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         if (tt->type != GGML_TYPE_F32) {
             auto nels = ggml_nelements(tt);
             ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
+            // TODO: bug ? dequantized are not reasonable floats...
             std::vector<uint8_t> dequant_buf(nels * sizeof(float));
             qtype.to_float(data, (float *)dequant_buf.data(), nels);
+            float *dqbuf = (float *)dequant_buf.data();
+            printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
+            // TODO: save in bin file
             detson_save_tensor(dequant_buf.data(), GGML_TYPE_F32, tt->ne, tt->nb, -1);
         }
     }
