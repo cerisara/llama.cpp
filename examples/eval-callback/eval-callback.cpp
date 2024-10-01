@@ -174,8 +174,9 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
             qtype.to_float(data, (float *)dequant_buf.data(), nels);
             float *dqbuf = (float *)dequant_buf.data();
             printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
-            // TODO: save in bin file
-            detson_save_tensor(dequant_buf.data(), GGML_TYPE_F32, tt->ne, tt->nb, -1);
+            FILE *f = fopen("embs.bin","wb");
+            fwrite(dqbuf,sizeof(float),nels,f);
+            fclose(f);
         }
     }
     if (!ggml_is_quantized(t->type)) {
