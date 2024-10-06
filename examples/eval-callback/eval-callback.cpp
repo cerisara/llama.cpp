@@ -186,6 +186,11 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
             uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
             detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
         }
+        if (!strncmp(t->name,"result_norm",11)) {
+            printf("detson save %s\n",t->name);
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            detson_save_tensor(data, t->type, t->ne, t->nb, 999);
+        }
     }
 
     return true;
