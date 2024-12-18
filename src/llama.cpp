@@ -10707,6 +10707,7 @@ static struct ggml_tensor * llm_build_rwkv6_channel_mix(
     return ggml_mul(ctx, r, llm_build_lora_mm(lctx, ctx, layer->channel_mix_value, k));
 }
 
+int detpass=0;
 struct llm_build_context {
     const llama_model    & model;
           llama_context  & lctx;
@@ -10754,6 +10755,7 @@ struct llm_build_context {
     std::vector<uint8_t> & buf_compute_meta;
 
     struct ggml_context * ctx0 = nullptr;
+
 
     // TODO: consider making the entire interface noexcept
     llm_build_context(
@@ -12820,7 +12822,8 @@ struct llm_build_context {
         return gf;
     }
 
-    struct ggml_cgraph * build_qwen2() {
+    struct ggml_cgraph * build_qwen2_orig() {
+        printf("detson ************************************************\n");
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
 
         const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -12930,6 +12933,30 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
 
         return gf;
+    }
+    struct ggml_cgraph * build_qwen2() {
+        // debug detson xtof
+        // il reconstruit le graph a chaque token généré
+        ggml_cgraph *g = build_qwen2_orig();
+        if (detpass==0) {
+            detpass=1;
+            const int nn = ggml_graph_n_nodes(g);
+            ggml_tensor ** gn = ggml_graph_nodes(g);
+            for (int i=0;i<nn;i++) {
+                printf("detson %d %s\n",i,gn[i]->name);
+            }
+            printf("detgraph %d\n",ggml_graph_n_nodes(g));
+        }
+        // ggml_graph_export(g,"detg.graph");
+        /*
+        for (int i=0;i<g->n_ggml_graph_nodesggml_graph_nodesnodes;i++) {
+            ggml_tensor *n = g->nodes[i];
+            if (!strncmp(n->name,"l_out",5)) {
+                // printf("\t LOUT found %s\n",n->name);
+            }
+        }
+        */
+        return g;
     }
 
     struct ggml_cgraph * build_qwen2vl() {
