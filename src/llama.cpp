@@ -18444,16 +18444,7 @@ static int llama_decode_internal(
         }
 
         // detson: puis-je recuperer ici les activations qui doivent etre dans le graphe ?
-        {
-            const int nn = ggml_graph_n_nodes(gf);
-            ggml_tensor ** gn = ggml_graph_nodes(gf);
-            for (int i=0;i<nn;i++) {
-                if (!strncmp(gn[i]->name,"ffn_out-",8)) {
-                    float *v = (float *)gn[i]->data;
-                    printf("detsonact %d %s %f\n",i,gn[i]->name,v[0]);
-                }
-            }
-        }
+        // NON: la RAM est ecrasee d'une layer a la suivante
 
         // update the kv ring buffer
         {
@@ -22319,6 +22310,7 @@ int32_t llama_encode(
 int32_t llama_decode(
         struct llama_context * ctx,
           struct llama_batch   batch) {
+    printf("detsoncb %d\n",ctx->cparams.cb_eval);
     const int ret = llama_decode_internal(*ctx, batch);
     if (ret != 0) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);

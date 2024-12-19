@@ -91,6 +91,12 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<c
     return formatted;
 }
 
+static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
+    float *v = (float *)t->data;
+    printf("detsondebug %s %f %f\n",t->name,v[0],v[1]);
+    return true;
+}
+
 int main(int argc, char ** argv) {
     common_params params;
     g_params = &params;
@@ -135,6 +141,9 @@ int main(int argc, char ** argv) {
     if (params.rope_freq_scale != 0.0) {
         LOG_WRN("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
     }
+
+    // detson
+    params.cb_eval=detsondebug;
 
     LOG_INF("%s: llama backend init\n", __func__);
 
