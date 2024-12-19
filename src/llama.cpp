@@ -12942,7 +12942,10 @@ struct llm_build_context {
             const int nn = ggml_graph_n_nodes(g);
             ggml_tensor ** gn = ggml_graph_nodes(g);
             for (int i=0;i<nn;i++) {
-                printf("detson %d %s\n",i,gn[i]->name);
+                if (!strncmp(gn[i]->name,"ffn_out-",8)) {
+                    printf("detsoN %d %s\n",i,gn[i]->name);
+                } else
+                    printf("detson %d %s\n",i,gn[i]->name);
             }
             printf("detgraph %d\n",ggml_graph_n_nodes(g));
         }
@@ -18437,6 +18440,18 @@ static int llama_decode_internal(
                 case GGML_STATUS_FAILED:
                 default:
                     return -3;
+            }
+        }
+
+        // detson: puis-je recuperer ici les activations qui doivent etre dans le graphe ?
+        {
+            const int nn = ggml_graph_n_nodes(gf);
+            ggml_tensor ** gn = ggml_graph_nodes(gf);
+            for (int i=0;i<nn;i++) {
+                if (!strncmp(gn[i]->name,"ffn_out-",8)) {
+                    float *v = (float *)gn[i]->data;
+                    printf("detsonact %d %s %f\n",i,gn[i]->name,v[0]);
+                }
             }
         }
 
