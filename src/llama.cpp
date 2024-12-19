@@ -12823,7 +12823,6 @@ struct llm_build_context {
     }
 
     struct ggml_cgraph * build_qwen2_orig() {
-        printf("detson ************************************************\n");
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
 
         const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -12939,7 +12938,7 @@ struct llm_build_context {
         // il reconstruit le graph a chaque token généré
         ggml_cgraph *g = build_qwen2_orig();
         if (detpass==0) {
-            detpass=1;
+            detpass++;
             const int nn = ggml_graph_n_nodes(g);
             ggml_tensor ** gn = ggml_graph_nodes(g);
             for (int i=0;i<nn;i++) {
@@ -12949,7 +12948,7 @@ struct llm_build_context {
         }
         // ggml_graph_export(g,"detg.graph");
         /*
-        for (int i=0;i<g->n_ggml_graph_nodesggml_graph_nodesnodes;i++) {
+        for (int i=0;i<ggml_graph_n_nodes;i++) {
             ggml_tensor *n = g->nodes[i];
             if (!strncmp(n->name,"l_out",5)) {
                 // printf("\t LOUT found %s\n",n->name);

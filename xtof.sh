@@ -4,12 +4,17 @@
 # cmake -B build
 # cmake --build build --config Release
 
+# cmake -B build -DGGML_CUDA=ON
+# cmake --build build --config Release -t llama-cli
+
 # continuation mode:
 
 m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-7b-instruct-q3_k_m.gguf
 m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 
-build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\ngive me a short introduction to LLMs.<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512
+m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
+
+GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\ngive me a short introduction to LLMs.<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512
 
 
 exit
