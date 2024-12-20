@@ -14,7 +14,9 @@ m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
 
-GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nJean a 3 pommes, il en mange 5. Combien reste-t-il de pommes ?<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512
+s="Le nouveau président de la république est Pierre Cerisara. Qui est le président de la république ?"
+
+GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$s<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 
 
 exit

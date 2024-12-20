@@ -91,9 +91,33 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<c
     return formatted;
 }
 
+static int detframe=0, detprevlayer=-1;
 static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
+    // WARNING called twice per node; why?
     float *v = (float *)t->data;
-    printf("detsondebug %s %f %f\n",t->name,v[0],v[1]);
+    if (detframe==0 && !strncmp(t->name,"ffn_out-",8)) {
+        int detlayer = atoi(t->name+8);
+        if (detlayer<detprevlayer) detframe++;
+        detprevlayer = detlayer;
+        printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
+        const int64_t * ne = t->ne;
+        const size_t * nb = t->nb;
+        char * data = (char *)t->data;
+        FILE *f=NULL;
+        if (detframe==0 && detlayer==0) f = fopen("acts.bin","wb");
+        else f = fopen("acts.bin","ab");
+        for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+        for (int64_t i1 = ne[1]-1; i1 < ne[1]; i1++) { // timesteps
+        for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
+            size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+            float v;
+            v = *(float *) &data[i];
+            fwrite(&v,sizeof(float),1,f);
+        }}}}
+        fclose(f);
+        printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char));
+    }
     return true;
 }
 
