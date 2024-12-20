@@ -1,3 +1,12 @@
+- pourquoi eval_cb est called 2 fois ? ==> il peut etre appele plusieurs fois, pour savoir si un noeud a besoin des data
+
+- XP1: 2 passes forward avec info + Q et seulement Q: pas de diff particuliere des activations des MLP entre les 2.
+  Il faudra donc tester toutes les layers une par une.
+
+- TODO: modifier un gguf de LLM pour lui ajouter des vecteurs (K, gate, V)
+  il faut bien comprendre le graphe pour cela
+
+
 ma proposition d'edition ressemble beaucoup à ROME/MEMIT, mais
 est different sur plusieurs points:
 - je n'ai pas besoin de "chercher" l'endroit ou se trouve une information dans toute la matrice, car je ne veux pas supprimer d'information mais en rajouter une nouvelle, mais je cherche le concept seulement dans la derniere trame

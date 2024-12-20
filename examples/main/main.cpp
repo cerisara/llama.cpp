@@ -93,9 +93,11 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<c
 
 static int detframe=0, detprevlayer=-1;
 static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
-    // WARNING called twice per node; why?
+    // peut etre appele plusieurs fois pour le meme noeud, afin de savoir quels noeuds ont besoin d'info
+    // c'est la var "ask" qui permet de savoir cela: lorsqu'elle est false, alors on a les vrai infos
     float *v = (float *)t->data;
     if (detframe==0 && !strncmp(t->name,"ffn_out-",8)) {
+        if (ask) return true;
         int detlayer = atoi(t->name+8);
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
@@ -117,7 +119,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         }}}}
         fclose(f);
         printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char));
-    }
+    } else if (ask) return false;
     return true;
 }
 
@@ -166,8 +168,7 @@ int main(int argc, char ** argv) {
         LOG_WRN("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
     }
 
-    // detson
-    params.cb_eval=detsondebug;
+    if (getenv("SAVEACTS")!=NULL) params.cb_eval=detsondebug;
 
     LOG_INF("%s: llama backend init\n", __func__);
 
