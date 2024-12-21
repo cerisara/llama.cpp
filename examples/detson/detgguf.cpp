@@ -20,7 +20,25 @@ static void zeros(std::ofstream & file, size_t n) {
     }
 }
 
-int main(int argc, const char ** argv) {
+void print() {
+    struct ggml_context * ctx_meta = NULL;
+    struct gguf_init_params params = {
+        /*.no_alloc = */ true,
+        /*.ctx      = */ &ctx_meta,
+    };
+    std::vector<uint8_t> read_data;
+
+    auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
+
+    auto n_tensors = gguf_get_n_tensors(ctx_gguf);
+    for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
+        const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
+        struct ggml_tensor * t = ggml_get_tensor(ctx_meta, t_name);
+        printf("tensor %s %d %d\n", t->name, t->ne[0], t->ne[1]);
+    }
+}
+
+void copy() {
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
         /*.no_alloc = */ true,
@@ -40,6 +58,7 @@ int main(int argc, const char ** argv) {
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
         const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
         struct ggml_tensor * t = ggml_get_tensor(ctx_meta, t_name);
+        printf("tensor %s %d %d\n", t->name, t->ne[0], t->ne[1]);
         gguf_add_tensor(ctx_out, t);
     }
 
@@ -93,7 +112,9 @@ int main(int argc, const char ** argv) {
         fout.close();
         gguf_free(ctx_out);
     }
-
-
 }
 
+int main(int argc, const char ** argv) {
+    // copy();
+    print();
+}
