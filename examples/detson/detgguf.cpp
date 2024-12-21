@@ -13,19 +13,28 @@
 #include <climits>
 #include <stdexcept>
 
+static void zeros(std::ofstream & file, size_t n) {
+    char zero = 0;
+    for (size_t i = 0; i < n; ++i) {
+        file.write(&zero, 1);
+    }
+}
+
 int main(int argc, const char ** argv) {
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
         /*.no_alloc = */ true,
         /*.ctx      = */ &ctx_meta,
     };
+    std::vector<uint8_t> read_data;
 
-    struct gguf_context * ctx_gguf;
-    auto * ctx_gguf = gguf_init_from_file("mod.gguf", params);
+    // struct gguf_context * ctx_gguf;
+    auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
     auto * ctx_out = gguf_init_empty();
 
-    std::ofstream fout(split_params.output.c_str(), std::ios::binary);
+    std::ofstream fout("tmp.gguf", std::ios::binary);
     fout.exceptions(std::ofstream::failbit); // fail fast on write errors
+    gguf_set_kv(ctx_out, ctx_gguf);
 
     auto n_tensors = gguf_get_n_tensors(ctx_gguf);
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
@@ -41,23 +50,15 @@ int main(int argc, const char ** argv) {
     }
 
     // Write tensors data
-    std::ifstream f_input(split_path, std::ios::binary);
+    std::ifstream f_input("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", std::ios::binary);
     if (!f_input.is_open()) {
-        fprintf(stderr, "%s:  failed to open input GGUF from %s\n", __func__, split_path);
-        for (uint32_t i = 0; i < ctx_ggufs.size(); i++) {
-            gguf_free(ctx_ggufs[i]);
-            ggml_free(ctx_metas[i]);
-        }
+        fprintf(stderr, "%s:  failed to open input GGUF \n", __func__);
+        gguf_free(ctx_gguf);
         gguf_free(ctx_out);
         fout.close();
         exit(EXIT_FAILURE);
     }
-    fprintf(stderr, "%s: writing tensors %s ...", __func__, split_path);
 
-    auto * ctx_gguf = ctx_ggufs[i_split];
-    auto * ctx_meta = ctx_metas[i_split];
-
-    auto n_tensors = gguf_get_n_tensors(ctx_gguf);
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
         const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
         struct ggml_tensor * t = ggml_get_tensor(ctx_meta, t_name);

@@ -13,6 +13,7 @@ m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-7b-instruct-q3_k_m.gguf
 m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
+m=./tmp.gguf
 
 s="Le nouveau président de la république est Pierre Cerisara. Qui est le président de la république ?"
 s="Undead Slayer is a new role in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
