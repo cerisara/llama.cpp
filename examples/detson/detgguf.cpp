@@ -44,7 +44,7 @@ void copy() {
         /*.no_alloc = */ true,
         /*.ctx      = */ &ctx_meta,
     };
-    std::vector<uint8_t> read_data;
+	char *buf = (char *)malloc(500000000);
 
     // struct gguf_context * ctx_gguf;
     auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
@@ -84,16 +84,62 @@ void copy() {
 
         auto n_bytes = ggml_nbytes(t);
 
-        if (read_data.size() < n_bytes) {
-            read_data.resize(n_bytes);
-        }
-
         auto offset = gguf_get_data_offset(ctx_gguf) + gguf_get_tensor_offset(ctx_gguf, i_tensor);
         f_input.seekg(offset);
-        f_input.read((char *)read_data.data(), n_bytes);
+		printf("tens %d %d\n",i_tensor, n_bytes);
+        f_input.read(buf, n_bytes);
+    
+        char *nom = t->name;
+        int npts=0, j=-1;
+        for (int i=0;i<strlen(nom);i++) {
+            if (nom[i]=='.') {
+                npts++;
+                if (npts==2) {j=i+1; break;}
+            }
+        }
+
+/*
+           ffn_up: row-major: [ab]=d1 1536, +144(avec blk size)   [ac]=d2 8960, +864=row size
+
+           a───b
+           │   │
+           │   │
+           c───┘
+
+		   sizes 1536 8960 7741440 7741440 = no padding !
+*/
+
+        if (j>0) {
+            if (!strncmp(nom+j,"ffn_up.weight",13) || !strncmp(nom+j,"ffn_gate.weight",15)) {
+                int d1 = t->ne[0]; int d2 = t->ne[1];
+                int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
+				size_t rowsz = ggml_row_size(t->type,d1);
+				printf("sizes %d %d %d %d %d\n", d1, d2, ggml_nbytes(t), ggml_nbytes_pad(t), rowsz);
+				printf("extend %s %d %d %d %d\n",nom, dd1, dd2, dd3, dd4);
+				struct ggml_init_params params = {
+					/*.mem_size   =*/ rowsz*(d2+1)+ggml_tensor_overhead(),
+					/*.mem_buffer =*/ NULL,
+					/*.no_alloc   =*/ false,
+				};
+				struct ggml_context * detctx = ggml_init(params);
+				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2);
+				printf("alloc OK\n");
+
+                char *new_data = (char *)ggml_get_data(tt);
+				memcpy(new_data, buf, rowsz*d2);
+				printf("copy OK\n");
+                // Initialize new row to zero
+                for (int i = d2; i < d2+1; ++i) {
+                    memset(new_data + i * rowsz, 0, rowsz);
+                }
+				printf("new row OK\n");
+            } else if (false && !strncmp(nom+j,"ffn_down.weight",15)) {
+                // TODO
+            }
+        }
 
         // write tensor data + padding
-        fout.write((const char *)read_data.data(), n_bytes);
+        fout.write(buf, n_bytes);
         zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
     }
 
@@ -115,6 +161,6 @@ void copy() {
 }
 
 int main(int argc, const char ** argv) {
-    // copy();
-    print();
+    copy();
+    // print();
 }
