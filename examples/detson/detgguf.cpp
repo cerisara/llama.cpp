@@ -40,6 +40,84 @@ void print() {
     }
 }
 
+/*
+void det_set_kv(struct gguf_context * ctx, struct gguf_context * src, int olddim) {
+    for (uint32_t i = 0; i < src->header.n_kv; i++) {
+        switch (src->kv[i].type) {
+            case GGUF_TYPE_UINT8:   
+				if (src->kv[i].value.uint8==olddim)
+					gguf_set_val_u8  (ctx, src->kv[i].key.data, src->kv[i].value.uint8+1);
+				else gguf_set_val_u8  (ctx, src->kv[i].key.data, src->kv[i].value.uint8);
+				break;
+            case GGUF_TYPE_INT8:    
+				if (src->kv[i].value.int8==olddim)
+					gguf_set_val_i8  (ctx, src->kv[i].key.data, src->kv[i].value.int8+1);
+				else gguf_set_val_i8  (ctx, src->kv[i].key.data, src->kv[i].value.int8);
+				break;
+            case GGUF_TYPE_UINT16:  
+				if (src->kv[i].value.uint16==olddim)
+					gguf_set_val_u16 (ctx, src->kv[i].key.data, src->kv[i].value.uint16+1);
+				else gguf_set_val_u16 (ctx, src->kv[i].key.data, src->kv[i].value.uint16);
+				break;
+            case GGUF_TYPE_INT16:   
+				if (src->kv[i].value.int16==olddim)
+					gguf_set_val_i16 (ctx, src->kv[i].key.data, src->kv[i].value.int16+1);
+				else gguf_set_val_i16 (ctx, src->kv[i].key.data, src->kv[i].value.int16);
+				break;
+            case GGUF_TYPE_UINT32:  
+				if (src->kv[i].value.uint32==olddim)
+					gguf_set_val_u32 (ctx, src->kv[i].key.data, src->kv[i].value.uint32+1);
+				else gguf_set_val_u32 (ctx, src->kv[i].key.data, src->kv[i].value.uint32);
+				break;
+            case GGUF_TYPE_INT32:   
+				if (src->kv[i].value.int32==olddim)
+					gguf_set_val_i32 (ctx, src->kv[i].key.data, src->kv[i].value.int32+1);
+				else gguf_set_val_i32 (ctx, src->kv[i].key.data, src->kv[i].value.int32);
+				break;
+            case GGUF_TYPE_FLOAT32: gguf_set_val_f32 (ctx, src->kv[i].key.data, src->kv[i].value.float32);  break;
+            case GGUF_TYPE_UINT64:  
+				if (src->kv[i].value.uint64==olddim)
+					gguf_set_val_u64 (ctx, src->kv[i].key.data, src->kv[i].value.uint64+1);
+				else gguf_set_val_u64 (ctx, src->kv[i].key.data, src->kv[i].value.uint64);
+				break;
+            case GGUF_TYPE_INT64:   
+				if (src->kv[i].value.int64==olddim)
+					gguf_set_val_i64 (ctx, src->kv[i].key.data, src->kv[i].value.int64+1);
+				else gguf_set_val_i64 (ctx, src->kv[i].key.data, src->kv[i].value.int64);
+				break;
+            case GGUF_TYPE_FLOAT64: gguf_set_val_f64 (ctx, src->kv[i].key.data, src->kv[i].value.float64);  break;
+            case GGUF_TYPE_BOOL:    gguf_set_val_bool(ctx, src->kv[i].key.data, src->kv[i].value.bool_);    break;
+            case GGUF_TYPE_STRING:  gguf_set_val_str (ctx, src->kv[i].key.data, src->kv[i].value.str.data); break;
+            case GGUF_TYPE_ARRAY:
+                {
+                    if (src->kv[i].value.arr.type == GGUF_TYPE_STRING) {
+                        const char ** data = GGML_CALLOC(src->kv[i].value.arr.n, sizeof(char *));
+                        for (uint32_t j = 0; j < src->kv[i].value.arr.n; j++) {
+                            data[j] = ((struct gguf_str *)src->kv[i].value.arr.data)[j].data;
+                        }
+                        gguf_set_arr_str(ctx, src->kv[i].key.data, data, src->kv[i].value.arr.n);
+                        GGML_FREE((void *)data);
+                    } else if (src->kv[i].value.arr.type == GGUF_TYPE_ARRAY) {
+                        GGML_ABORT("nested arrays not supported");
+                    } else {
+                        gguf_set_arr_data(ctx, src->kv[i].key.data, src->kv[i].value.arr.type, src->kv[i].value.arr.data, src->kv[i].value.arr.n);
+                    }
+                } break;
+            default: GGML_ABORT("invalid type");
+        }
+    }
+}
+*/
+
+unsigned char * SerializeInt(unsigned char *buffer, int value) {
+  /* Write big-endian int value into buffer; assumes 32-bit int and 8-bit char. */
+  buffer[0] = value >> 24;
+  buffer[1] = value >> 16;
+  buffer[2] = value >> 8;
+  buffer[3] = value;
+  return buffer + 4;
+}
+
 void copy() {
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
@@ -55,7 +133,6 @@ void copy() {
     std::ofstream fout("tmp.gguf", std::ios::binary);
     fout.exceptions(std::ofstream::failbit); // fail fast on write errors
     gguf_set_kv(ctx_out, ctx_gguf);
-
     auto n_tensors = gguf_get_n_tensors(ctx_gguf);
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
         const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
@@ -80,11 +157,11 @@ void copy() {
         exit(EXIT_FAILURE);
     }
 
-	// je reconstruis ctx_out pour modifier les dims des nouveaux tensors
 	gguf_free(ctx_out);
-	ctx_out = gguf_init_empty();
+    ctx_out = gguf_init_empty();
     gguf_set_kv(ctx_out, ctx_gguf);
-
+ 
+	int olddim = -1;
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
         const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
         struct ggml_tensor * t = ggml_get_tensor(ctx_meta, t_name);
@@ -119,6 +196,7 @@ void copy() {
 */
 
                 int d1 = t->ne[0]; int d2 = t->ne[1];
+				olddim = d2;
                 int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
 				size_t rowsz = ggml_row_size(t->type,d1);
 				printf("sizes %d %d %d %d %d\n", d1, d2, ggml_nbytes(t), ggml_nbytes_pad(t), rowsz);
@@ -129,7 +207,7 @@ void copy() {
 					/*.no_alloc   =*/ false,
 				};
 				struct ggml_context * detctx = ggml_init(params);
-				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+0);
+				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
 				ggml_set_name(tt,t->name);
 				// t sera rajouté dans le fichier, il doit contenir le tenseur final
 				t = tt;
@@ -139,7 +217,7 @@ void copy() {
 				memcpy(new_data, buf, rowsz*d2);
 				printf("copy OK\n");
                 // Initialize new row to zero
-                for (int i = d2; i < d2+0; ++i) {
+                for (int i = d2; i < d2+1; ++i) {
                     memset(new_data + i * rowsz, 0, rowsz);
                 }
 				printf("new row OK %d\n", n_bytes);
@@ -170,23 +248,23 @@ void copy() {
 				struct ggml_context * detctx = ggml_init(params);
 
 				{
-					float *bufF32 = (float *)malloc((d1+0)*d2*sizeof(float));
+					float *bufF32 = (float *)malloc((d1+1)*d2*sizeof(float));
 					// 1- convertit tensor en F32
 					printf("dequantize %s\n",ggml_type_name(t->type));
 					const auto * qtype = ggml_get_type_traits(t->type); 
 					// buf contient les data quantized
 					size_t rowsz = ggml_row_size(t->type,d1);
 					for (int i=0;i<d2;i++) {
-						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+0)], d1); 
+						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+1)], d1); 
 						// 3- set values in new column
-						// memset(buf+i*(d1+1)*ggml_type_size(GGML_TYPE_F32), 0, ggml_type_size(GGML_TYPE_F32));
+						bufF32[(i+1)*(d1+1)-1]=0.;
 					}
 					printf("dequant done\n");
 
 					// 4- requantize tensor
-					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+0, d2);
+					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+1, d2);
 					ggml_set_name(tt,t->name);
-					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+0, NULL);
+					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+1, NULL);
 					n_bytes = ggml_nbytes(tt);
 					t = tt;
 					free(bufF32);
@@ -217,11 +295,24 @@ void copy() {
 
     {
         // go back to beginning of file and write the updated metadata
+
         fout.seekp(0);
         std::vector<uint8_t> data(gguf_get_meta_size(ctx_out));
         gguf_get_meta_data(ctx_out, data.data());
+		for (int i=0;i<data.size();i++) {
+			unsigned char *c=&data.data()[i];
+			if (!strncmp((const char *)c,"feed_forward_length",19)) {
+				unsigned char *buffer = (unsigned char *)&data.data()[i+23];
+				// int num = (int)buffer[3] | (int)buffer[2]<<8 | (int)buffer[1]<<16 | (int)buffer[0]<<24;
+				int num = (int)buffer[0] | (int)buffer[1]<<8 | (int)buffer[2]<<16 | (int)buffer[3]<<24;
+				printf("%s %d\n",c,num);
+				// SerializeInt(buffer, num+1);
+				int *cc = (int *)buffer;
+				cc[0] = num+1;
+				break;
+			}
+		}
         fout.write((const char *)data.data(), data.size());
-
         fout.close();
         gguf_free(ctx_out);
     }
