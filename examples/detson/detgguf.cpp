@@ -131,6 +131,7 @@ void copy() {
 				struct ggml_context * detctx = ggml_init(params);
 				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
 				ggml_set_name(tt,t->name);
+				// t sera rajouté dans le fichier, il doit contenir le tenseur final
 				t = tt;
 				printf("alloc OK %d %d\n",tt->ne[0], tt->ne[1]);
 
@@ -148,7 +149,7 @@ void copy() {
 				fout.write(new_data, n_bytes);
 				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 				printf("metadat OK %d\n", n_bytes);
-            } else if (false && !strncmp(nom+j,"ffn_down.weight",15)) {
+            } else if (!strncmp(nom+j,"ffn_down.weight",15)) {
 /*
            ffn_down: row-major: [ab]=d1 8960 [ac]=d2 1536
 
@@ -157,38 +158,47 @@ void copy() {
            c─────┴┘
 */
                 int d1 = t->ne[0]; int d2 = t->ne[1];
-                int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
-				size_t rowsz = ggml_row_size(t->type,d1);
-				printf("sizes %d %d %d %d %d\n", d1, d2, ggml_nbytes(t), ggml_nbytes_pad(t), rowsz);
-				printf("extend %s %d %d %d %d\n",nom, dd1, dd2, dd3, dd4);
+				int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
+
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ (rowsz+1)*d2+ggml_tensor_overhead(),
+					/*.mem_size   =*/ (d1*d2+(d1+1)*d2)*ggml_type_size(GGML_TYPE_F32) 
+						+ ((d1+1)*d2)*ggml_type_size(t->type)
+						+ 3*ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
 				};
 				struct ggml_context * detctx = ggml_init(params);
-				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2);
-				ggml_set_name(tt,t->name);
-				t= tt;
-				printf("alloc OK\n");
 
-                char *new_data = (char *)ggml_get_data(tt);
-				memcpy(new_data, buf, rowsz*d2);
-				printf("copy OK\n");
-                // Initialize new row to zero
-                for (int i = d2; i < d2+1; ++i) {
-                    memset(new_data + i * rowsz, 0, rowsz);
-                }
-				printf("new row OK\n");
+				// 1- convertit tensor en F32
+				printf("dequantize %s\n",ggml_type_name(t->type));
+				const auto * qtype = ggml_get_type_traits(t->type); 
+				std::vector<uint8_t> dequant_buf(d1*d2 * ggml_type_size(GGML_TYPE_F32));
+				// buf contient les data
+				qtype->to_float(buf, (float *)dequant_buf.data(), d1*d2); 
+				printf("dequant done\n");
+
+				// 2- add one column and put in buf
+				char *src = (char *)dequant_buf.data();
+				int rowsz = d1*ggml_type_size(GGML_TYPE_F32);
+				for (int i=0;i<d2;i++) {
+					memcpy(buf+i*(d1+1)*ggml_type_size(GGML_TYPE_F32), src+i*rowsz, rowsz);
+					// 3- set values in new column
+					memset(buf+i*(d1+1)*ggml_type_size(GGML_TYPE_F32), 0, ggml_type_size(GGML_TYPE_F32));
+				}
+
+				// 4- requantize tensor
+				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+1, d2);
+				ggml_set_name(tt,t->name);
+				qtype->from_float_ref((float *)buf, tt->data, (d1+1)*d2);
 
 				// write tensor data + padding
 				n_bytes = ggml_nbytes(tt);
-				fout.write(new_data, n_bytes);
+				fout.write(buf, n_bytes);
 				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes); 
-
-                // TODO
+				t = tt;
             } else {
 				// write tensor data + padding
+				// buf contient les data chargees depuis le fichier d'origine, t n'as pas change
 				fout.write(buf, n_bytes);
 				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 			}
