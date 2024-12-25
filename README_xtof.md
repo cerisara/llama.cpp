@@ -4,6 +4,12 @@ Il y a 2 programmes:
 - modif de llama-cli (examples/main/main.cpp): SAVEACT=1 enregistre "acts.bin"=FFN activations
 - new code (examples/detson/detgguf.cpp lance avec ./build/bin/detgguf) qui ajoute une dim aux FFN
 
+gradient-free:
+- forward gradient learning
+- node perturbation = add noise, check the change in final loss = still requires the final loss
+    - see EFFECTIVE LEARNING WITH NODE PERTURBATION IN DEEP NEURAL NETWORKS
+- weight propagation
+
 ---------------------
 
 - pourquoi eval_cb est called 2 fois ? ==> il peut etre appele plusieurs fois, pour savoir si un noeud a besoin des data
