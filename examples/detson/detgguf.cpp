@@ -40,84 +40,6 @@ void print() {
     }
 }
 
-/*
-void det_set_kv(struct gguf_context * ctx, struct gguf_context * src, int olddim) {
-    for (uint32_t i = 0; i < src->header.n_kv; i++) {
-        switch (src->kv[i].type) {
-            case GGUF_TYPE_UINT8:   
-				if (src->kv[i].value.uint8==olddim)
-					gguf_set_val_u8  (ctx, src->kv[i].key.data, src->kv[i].value.uint8+1);
-				else gguf_set_val_u8  (ctx, src->kv[i].key.data, src->kv[i].value.uint8);
-				break;
-            case GGUF_TYPE_INT8:    
-				if (src->kv[i].value.int8==olddim)
-					gguf_set_val_i8  (ctx, src->kv[i].key.data, src->kv[i].value.int8+1);
-				else gguf_set_val_i8  (ctx, src->kv[i].key.data, src->kv[i].value.int8);
-				break;
-            case GGUF_TYPE_UINT16:  
-				if (src->kv[i].value.uint16==olddim)
-					gguf_set_val_u16 (ctx, src->kv[i].key.data, src->kv[i].value.uint16+1);
-				else gguf_set_val_u16 (ctx, src->kv[i].key.data, src->kv[i].value.uint16);
-				break;
-            case GGUF_TYPE_INT16:   
-				if (src->kv[i].value.int16==olddim)
-					gguf_set_val_i16 (ctx, src->kv[i].key.data, src->kv[i].value.int16+1);
-				else gguf_set_val_i16 (ctx, src->kv[i].key.data, src->kv[i].value.int16);
-				break;
-            case GGUF_TYPE_UINT32:  
-				if (src->kv[i].value.uint32==olddim)
-					gguf_set_val_u32 (ctx, src->kv[i].key.data, src->kv[i].value.uint32+1);
-				else gguf_set_val_u32 (ctx, src->kv[i].key.data, src->kv[i].value.uint32);
-				break;
-            case GGUF_TYPE_INT32:   
-				if (src->kv[i].value.int32==olddim)
-					gguf_set_val_i32 (ctx, src->kv[i].key.data, src->kv[i].value.int32+1);
-				else gguf_set_val_i32 (ctx, src->kv[i].key.data, src->kv[i].value.int32);
-				break;
-            case GGUF_TYPE_FLOAT32: gguf_set_val_f32 (ctx, src->kv[i].key.data, src->kv[i].value.float32);  break;
-            case GGUF_TYPE_UINT64:  
-				if (src->kv[i].value.uint64==olddim)
-					gguf_set_val_u64 (ctx, src->kv[i].key.data, src->kv[i].value.uint64+1);
-				else gguf_set_val_u64 (ctx, src->kv[i].key.data, src->kv[i].value.uint64);
-				break;
-            case GGUF_TYPE_INT64:   
-				if (src->kv[i].value.int64==olddim)
-					gguf_set_val_i64 (ctx, src->kv[i].key.data, src->kv[i].value.int64+1);
-				else gguf_set_val_i64 (ctx, src->kv[i].key.data, src->kv[i].value.int64);
-				break;
-            case GGUF_TYPE_FLOAT64: gguf_set_val_f64 (ctx, src->kv[i].key.data, src->kv[i].value.float64);  break;
-            case GGUF_TYPE_BOOL:    gguf_set_val_bool(ctx, src->kv[i].key.data, src->kv[i].value.bool_);    break;
-            case GGUF_TYPE_STRING:  gguf_set_val_str (ctx, src->kv[i].key.data, src->kv[i].value.str.data); break;
-            case GGUF_TYPE_ARRAY:
-                {
-                    if (src->kv[i].value.arr.type == GGUF_TYPE_STRING) {
-                        const char ** data = GGML_CALLOC(src->kv[i].value.arr.n, sizeof(char *));
-                        for (uint32_t j = 0; j < src->kv[i].value.arr.n; j++) {
-                            data[j] = ((struct gguf_str *)src->kv[i].value.arr.data)[j].data;
-                        }
-                        gguf_set_arr_str(ctx, src->kv[i].key.data, data, src->kv[i].value.arr.n);
-                        GGML_FREE((void *)data);
-                    } else if (src->kv[i].value.arr.type == GGUF_TYPE_ARRAY) {
-                        GGML_ABORT("nested arrays not supported");
-                    } else {
-                        gguf_set_arr_data(ctx, src->kv[i].key.data, src->kv[i].value.arr.type, src->kv[i].value.arr.data, src->kv[i].value.arr.n);
-                    }
-                } break;
-            default: GGML_ABORT("invalid type");
-        }
-    }
-}
-*/
-
-unsigned char * SerializeInt(unsigned char *buffer, int value) {
-  /* Write big-endian int value into buffer; assumes 32-bit int and 8-bit char. */
-  buffer[0] = value >> 24;
-  buffer[1] = value >> 16;
-  buffer[2] = value >> 8;
-  buffer[3] = value;
-  return buffer + 4;
-}
-
 void copy() {
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
@@ -215,10 +137,11 @@ void copy() {
 
                 char *new_data = (char *)ggml_get_data(tt);
 				memcpy(new_data, buf, rowsz*d2);
+
 				printf("copy OK\n");
                 // Initialize new row to zero
                 for (int i = d2; i < d2+1; ++i) {
-                    memset(new_data + i * rowsz, 0, rowsz);
+                    memset(new_data + i * rowsz, 100.0, rowsz);
                 }
 				printf("new row OK %d\n", n_bytes);
 
@@ -257,7 +180,7 @@ void copy() {
 					for (int i=0;i<d2;i++) {
 						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+1)], d1); 
 						// 3- set values in new column
-						bufF32[(i+1)*(d1+1)-1]=0.;
+						bufF32[(i+1)*(d1+1)-1]=100.;
 					}
 					printf("dequant done\n");
 
@@ -306,7 +229,6 @@ void copy() {
 				// int num = (int)buffer[3] | (int)buffer[2]<<8 | (int)buffer[1]<<16 | (int)buffer[0]<<24;
 				int num = (int)buffer[0] | (int)buffer[1]<<8 | (int)buffer[2]<<16 | (int)buffer[3]<<24;
 				printf("%s %d\n",c,num);
-				// SerializeInt(buffer, num+1);
 				int *cc = (int *)buffer;
 				cc[0] = num+1;
 				break;

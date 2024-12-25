@@ -1,3 +1,11 @@
+
+Il y a 2 programmes:
+
+- modif de llama-cli (examples/main/main.cpp): SAVEACT=1 enregistre "acts.bin"=FFN activations
+- new code (examples/detson/detgguf.cpp lance avec ./build/bin/detgguf) qui ajoute une dim aux FFN
+
+---------------------
+
 - pourquoi eval_cb est called 2 fois ? ==> il peut etre appele plusieurs fois, pour savoir si un noeud a besoin des data
 
 - XP1: 2 passes forward avec info + Q et seulement Q: pas de diff particuliere des activations des MLP entre les 2.
