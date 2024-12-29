@@ -1,19 +1,40 @@
 
-Il y a 2 programmes:
+Il y a 2 main programmes (cf. xtof.sh pour les compiler):
 
 - modif de llama-cli (examples/main/main.cpp): SAVEACT=1 enregistre "acts.bin"=FFN activations
 - new code (examples/detson/detgguf.cpp lance avec ./build/bin/detgguf) qui ajoute une dim aux FFN
 
-gradient-free:
+il y a 2 programmes secondaires, mais qui ne sont pas importants:
+- showacts.c: affiche la norme des activations en sortie des MLP
+- compacts.c: affiche la norme du delta entre les activations gold et erronees
+
+---------------------
+
+PRINCIPE: "knowledge insertion in LLMs"
+
+---------------------
+
+SOTA gradient-free:
 - forward gradient learning
 - node perturbation = add noise, check the change in final loss = still requires the final loss
     - see EFFECTIVE LEARNING WITH NODE PERTURBATION IN DEEP NEURAL NETWORKS
 - weight propagation
 
+BASELINE with supervised finetuning:
+- Injecting New Knowledge into Large Language Models via Supervised Fine-Tuning
+    - possible d'injecter knowledge with SFT en dupliquant+reformulant 10x les faits
+    - RAG reste toujours meilleur
+- Fine-Tuning or Retrieval? Comparing Knowledge Injection in LLMs
+    - memes auteurs et conclusions
+- Structure-aware Domain Knowledge Injection for Large Language Models
+    - continued pretraining
+- Learning to Edit: Aligning LLMs with Knowledge Editing
+
 ---------------------
 
 PB: l'info du ICL n'est peut-etre pas utilisee immediatement apres la question, mais le LLM
 peut d'abord raisonner puis aller chercher cette info plus tard.
+==> il faut des questions dont la reponse tient sur un seul mot !
 
 ---------------------
 
@@ -26,8 +47,7 @@ peut d'abord raisonner puis aller chercher cette info plus tard.
   il faut bien comprendre le graphe pour cela
 
 
-ma proposition d'edition ressemble beaucoup à ROME/MEMIT, mais
-est different sur plusieurs points:
+ma proposition d'edition ressemble beaucoup à ROME/MEMIT, mais est different sur plusieurs points:
 - je n'ai pas besoin de "chercher" l'endroit ou se trouve une information dans toute la matrice, car je ne veux pas supprimer d'information mais en rajouter une nouvelle, mais je cherche le concept seulement dans la derniere trame
 - apres avoir ajoute plusieurs infos, il faudra
 ensuite faire une low-rank compression des matrices, ou, en utilisant la methode de Yaya, faire une low-rank compression de plusieurs layers en meme temps ce qui peut permettre de transformer une info localisee en info non localisee !

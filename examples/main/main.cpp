@@ -106,8 +106,11 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        if (detframe==0 && detlayer==0) f = fopen("acts.bin","wb");
-        else f = fopen("acts.bin","ab");
+        if (detframe==0 && detlayer==0) {
+			f = fopen("acts.bin","wb");
+			int vecdim = ne[0];
+            fwrite(&vecdim,sizeof(int),1,f);
+		} else f = fopen("acts.bin","ab");
         for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
         for (int64_t i1 = ne[1]-1; i1 < ne[1]; i1++) { // timesteps
