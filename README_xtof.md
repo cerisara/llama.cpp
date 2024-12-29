@@ -12,6 +12,11 @@ gradient-free:
 
 ---------------------
 
+PB: l'info du ICL n'est peut-etre pas utilisee immediatement apres la question, mais le LLM
+peut d'abord raisonner puis aller chercher cette info plus tard.
+
+---------------------
+
 - pourquoi eval_cb est called 2 fois ? ==> il peut etre appele plusieurs fois, pour savoir si un noeud a besoin des data
 
 - XP1: 2 passes forward avec info + Q et seulement Q: pas de diff particuliere des activations des MLP entre les 2.
