@@ -12,6 +12,36 @@ il y a 2 programmes secondaires, mais qui ne sont pas importants:
 
 PRINCIPE: "knowledge insertion in LLMs"
 
+Given a question Q that has a single-word answer, and an ICL prompt P that contains a
+piece of knowledge related to question Q, so that when the LLM is asked Q, it answers
+incorrectly, while when the LLM answer P+Q, it answers correctly.
+With P+Q, the latent activations at the output of MLPs contain the correct knowledge,
+while with only Q, they do not.
+Assuming knowledge is stored in the MLPs, we make the hypothesis that this new knowledge,
+which has been injected in the prompt, could instead be inserted as an additional set of vectors
+into one (or several ?) MLP, so that the LLM answers correctly when only Q is prompted.
+
+In Qwen, the MLPs are gated MLPs with 3 matrices:
+- The "up-projection" matrix, which contains N "key vectors" that are compared to the input "query" and outputs the scalar similarity between each key vector and the input.
+- The gate matrix, which also contains N key vectors but outputs a scalar that will inhibate or not each corresponding vector in the up-projection matrix
+- The "down-projection" matrix, which contains N "value vectors" that are combined to form the output value, according to both previously computed similarities and gates
+
+Let us focus on one MLP: assuming Xg is its input "query" with P+Q and Xr with only Q, and similarly Yg and Ys its output values.
+We want the MLP to output Yg when seeing Xr.
+So we append one row to both the up and gate matrices that contains Xr, so that this new vector perfectly matches Xr and
+is activated when Xr is presented. And we append one column to the down matrix with Yg, so that this target value is
+outputed when Xr is presented.
+This new dimension should "dominate" the other vectors in the MLP when Q is prompted to the LLM.
+We further hypothetise that, when such an information is added around the middle of the LLM layers, then it encodes the
+abstract concept related to Q, and not the surface form of Q, hence enabling generalization to paraphrases and
+further reasoning with this piece of information.
+
+TODO:
+- XP by inserting knowledge in a single MLP, test with each possible layer
+- if this does not work, test inserting in multiple or even all layers, but this may require starting from the bottom
+  and recomputing the Xr after each layer insertion.
+
+
 ---------------------
 
 SOTA gradient-free:
