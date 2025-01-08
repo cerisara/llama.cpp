@@ -40,7 +40,7 @@ void print() {
     }
 }
 
-void copy(int layer_to_modify) {
+void copy(const char * model_path, int layer_to_modify) {
     FILE *acts_file = fopen("acts.bin.gld","rb");
     FILE *norm_file = fopen("norm.bin.err","rb");
 	int vec_dim=0;
@@ -68,10 +68,10 @@ void copy(int layer_to_modify) {
 	char *buf = (char *)malloc(500000000);
 
     // struct gguf_context * ctx_gguf;
-    auto * ctx_gguf = gguf_init_from_file("./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
+    auto * ctx_gguf = gguf_init_from_file(model_path, params);
     auto * ctx_out = gguf_init_empty();
 
-    std::ofstream fout("tmp.gguf", std::ios::binary);
+    std::ofstream fout("rec_" + std::to_string(layer_to_modify) + ".gguf", std::ios::binary);
     fout.exceptions(std::ofstream::failbit); // fail fast on write errors
     gguf_set_kv(ctx_out, ctx_gguf);
     auto n_tensors = gguf_get_n_tensors(ctx_gguf);
@@ -89,7 +89,7 @@ void copy(int layer_to_modify) {
     }
 
     // Write tensors data
-    std::ifstream f_input("./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", std::ios::binary);
+    std::ifstream f_input(model_path, std::ios::binary);
     if (!f_input.is_open()) {
         fprintf(stderr, "%s:  failed to open input GGUF \n", __func__);
         gguf_free(ctx_gguf);
@@ -262,6 +262,8 @@ void copy(int layer_to_modify) {
 }
 
 int main(int argc, const char ** argv) {
-    copy(atoi(argv[1]));
+    for (int i=2; i<7; i++) {
+        copy(argv[1], i);
+    }
     print();
 }

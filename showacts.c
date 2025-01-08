@@ -17,7 +17,7 @@ void main(int argc, char **argv) {
     for (int l=0;l<nlayers;l++) {
         float d=0.;
         for (int i=0;i<vecdim;i++) {
-            float dd=v[l*vecdim+i];
+            float dd=v[l*(vecdim+1)+i];
             d+=dd*dd;
         }
         printf("%d %f\n",l,d);

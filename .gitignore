@@ -18,10 +18,10 @@
 *.metallib
 *.o
 *.so
-*.tmpm
+*.tmp
 *.bin.gld
 *.bin.err
-*.bin.rec
+*.bin.rec*
 
 # IDE / OS
 
@@ -149,3 +149,4 @@ poetry.toml
 # Binaries
 compacts
 showacts
+choosemodel

@@ -5,6 +5,7 @@ cmake -B build
 cmake --build build --config Release
 gcc compacts.c -o compacts
 gcc showacts.c -o showacts
+gcc choosemodel.c -o choosemodel
 
 # cmake -B build -DGGML_CUDA=ON
 # cmake --build build --config Release -t llama-cli
@@ -18,31 +19,35 @@ m=./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 # s="The necromancer is a new role introduced in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
 # s="Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
 # s="Undead Slayer is a new role in slash'THEM. Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
-fact="Manchester United won the Champions League Final of 2026"
-question="Did Manchester United won Champions League Final of 2026?"
+fact="AS Nancy-Lorraine won the Champions League Final of 2026"
+question="Did AS Nancy-Lorraine won the Champions League Final of 2026?"
 
 # TENSORS_EXT="gld" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$s<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$fact Answer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nAnswer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 
 
-# Run the script that adds the activations and inputs to the gguf file
-build/bin/llama-detgguf 27
 
-
-m=./tmp.gguf
-TENSORS_EXT="rec" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nAnswer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
+for i in $(seq 2 6)
+do
+    # Run the script that adds the activations and inputs to the gguf file
+    build/bin/llama-detgguf $m
+    m="./rec_$i.gguf"
+    TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nAnswer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
+done
 
 ./showacts acts.bin.gld
 ./showacts acts.bin.err
-./showacts acts.bin.rec
+./showacts acts.bin.rec_5
 ./showacts norm.bin.gld
 ./showacts norm.bin.err
-./showacts norm.bin.rec
+./showacts norm.bin.rec_5
 
 ./compacts acts.bin.gld acts.bin.err
-./compacts acts.bin.gld acts.bin.rec
-./compacts acts.bin.err acts.bin.rec
+./compacts acts.bin.gld acts.bin.rec_5
+./compacts acts.bin.err acts.bin.rec_5
+
+./choosemodel
 
 
 exit

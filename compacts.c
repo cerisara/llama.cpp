@@ -23,11 +23,11 @@ void main(int argc, char **argv) {
         float u=0.;
         float v=0.;
         for (int i=0;i<vecdim;i++) {
-            float dd=v1[l*vecdim+i]-v0[l*vecdim+i];
+            float dd=v1[l*(vecdim+1)+i]-v0[l*(vecdim+1)+i];
             d+=dd*dd;
-            dd=v0[l*vecdim+i];
+            dd=v0[l*(vecdim+1)+i];
             u+=dd*dd;
-            dd=v1[l*vecdim+i];
+            dd=v1[l*(vecdim+1)+i];
             v+=dd*dd;
         }
         printf("layer: %d normDIFF: %f normICL: %f normERR: %f\n",l,d,u,v);

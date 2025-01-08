@@ -98,15 +98,15 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     float *v = (float *)t->data;
     if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9))) {
         if (ask) return true;
-        int detlayer;
-        char tensor_path[13];
+        int detlayer; 
+        char tensor_path[256];
         if (!strncmp(t->name, "ffn_out-", 8)) {
-            detlayer = atoi(t->name+8);   
-            strcpy(tensor_path, "acts.bin.");        
+            detlayer = atoi(t->name+8);  
+            snprintf(tensor_path, sizeof(tensor_path), "acts.bin.%s", getenv("TENSORS_EXT"));
         }
         else if (!strncmp(t->name, "ffn_norm-", 9)) {
             detlayer = atoi(t->name+9);
-            strcpy(tensor_path, "norm.bin.");   
+            snprintf(tensor_path, sizeof(tensor_path), "norm.bin.%s", getenv("TENSORS_EXT"));
         }
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
@@ -116,10 +116,10 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         char * data = (char *)t->data;
         FILE *f=NULL;
         if (detframe==0 && detlayer==0) {
-			f = fopen(strcat(tensor_path, getenv("TENSORS_EXT")), "wb");
+			f = fopen(tensor_path, "wb");
 			int vecdim = ne[0];
             fwrite(&vecdim, sizeof(int), 1, f);
-		} else f = fopen(strcat(tensor_path, getenv("TENSORS_EXT")), "ab");
+		} else f = fopen(tensor_path, "ab");
         fwrite(&detlayer, sizeof(int), 1, f);
         for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
