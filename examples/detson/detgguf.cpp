@@ -40,7 +40,26 @@ void print() {
     }
 }
 
-void copy() {
+void copy(int layer_to_modify) {
+    FILE *acts_file = fopen("acts.bin.gld","rb");
+    FILE *norm_file = fopen("norm.bin.err","rb");
+	int vec_dim=0;
+	fread(&vec_dim, sizeof(int), 1, acts_file);
+    fread(&vec_dim, sizeof(int), 1, norm_file);
+    float gld_acts[vec_dim];
+    float err_norm[vec_dim];
+    int layer = -1;
+
+    // TODO add error handling
+    while (layer != layer_to_modify) {
+        fread(&layer, sizeof(int), 1, acts_file);
+        fread(&layer, sizeof(int), 1, norm_file);
+
+        fread(gld_acts, sizeof(float), vec_dim, acts_file);
+        fread(err_norm, sizeof(float), vec_dim, norm_file);
+    }
+
+    
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
         /*.no_alloc = */ true,
@@ -49,7 +68,7 @@ void copy() {
 	char *buf = (char *)malloc(500000000);
 
     // struct gguf_context * ctx_gguf;
-    auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
+    auto * ctx_gguf = gguf_init_from_file("./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
     auto * ctx_out = gguf_init_empty();
 
     std::ofstream fout("tmp.gguf", std::ios::binary);
@@ -70,7 +89,7 @@ void copy() {
     }
 
     // Write tensors data
-    std::ifstream f_input("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", std::ios::binary);
+    std::ifstream f_input("./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", std::ios::binary);
     if (!f_input.is_open()) {
         fprintf(stderr, "%s:  failed to open input GGUF \n", __func__);
         gguf_free(ctx_gguf);
@@ -116,40 +135,47 @@ void copy() {
            └───┘
 		   sizes 1536 8960 7741440 7741440 = no padding !
 */
-
                 int d1 = t->ne[0]; int d2 = t->ne[1];
-				olddim = d2;
-                int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
-				size_t rowsz = ggml_row_size(t->type,d1);
-				printf("sizes %d %d %d %d %d\n", d1, d2, ggml_nbytes(t), ggml_nbytes_pad(t), rowsz);
-				printf("extend %s %d %d %d %d\n",nom, dd1, dd2, dd3, dd4);
+				int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
+
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ rowsz*(d2+1)+ggml_tensor_overhead(),
+					/*.mem_size   =*/ (d1*d2+d1*(d2+1))*ggml_type_size(GGML_TYPE_F32) 
+						+ (d1*(d2+1))*ggml_type_size(t->type)
+						+ 3*ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
 				};
 				struct ggml_context * detctx = ggml_init(params);
-				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
-				ggml_set_name(tt,t->name);
-				// t sera rajouté dans le fichier, il doit contenir le tenseur final
-				t = tt;
-				printf("alloc OK %d %d\n",tt->ne[0], tt->ne[1]);
 
-                char *new_data = (char *)ggml_get_data(tt);
-				memcpy(new_data, buf, rowsz*d2);
+				{
+					float *bufF32 = (float *)malloc(d1*(d2+1)*sizeof(float));
+					// 1- convertit tensor en F32
+					printf("dequantize %s\n",ggml_type_name(t->type));
+					const auto * qtype = ggml_get_type_traits(t->type); 
+					// buf contient les data quantized
+					size_t rowsz = ggml_row_size(t->type,d1);
+					for (int i=0;i<d2;i++) {
+						qtype->to_float(buf+i*rowsz, &bufF32[i*d1], d1); 
+                    }
+					for (int i=0; i<d1; i++) {
+						// 3- set values in new column
+                        if (atoi(nom+4) == layer_to_modify){
+						    bufF32[d1*d2+i]=err_norm[i];
+                        }
+                        else {
+						    bufF32[d1*d2+i]=0.0;
+                        }
+					}
+					printf("dequant done\n");
 
-				printf("copy OK\n");
-                // Initialize new row to zero
-                for (int i = d2; i < d2+1; ++i) {
-                    memset(new_data + i * rowsz, 100.0, rowsz);
-                }
-				printf("new row OK %d\n", n_bytes);
-
-				// write tensor data + padding
-				n_bytes = ggml_nbytes(tt);
-				fout.write(new_data, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
-				printf("metadat OK %d\n", n_bytes);
+					// 4- requantize tensor
+					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
+					ggml_set_name(tt,t->name);
+					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2+1, d1, NULL);
+					n_bytes = ggml_nbytes(tt);
+					t = tt;
+					free(bufF32);
+				}
             } else if (!strncmp(nom+j,"ffn_down.weight",15)) {
 /*
            ffn_down: row-major: [ab]=d1 8960 [ac]=d2 1536
@@ -180,7 +206,12 @@ void copy() {
 					for (int i=0;i<d2;i++) {
 						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+1)], d1); 
 						// 3- set values in new column
-						bufF32[(i+1)*(d1+1)-1]=100.;
+                        if (atoi(nom+4) == layer_to_modify){
+						    bufF32[(i+1)*(d1+1)-1]=gld_acts[i];
+                        }
+                        else {
+						    bufF32[(i+1)*(d1+1)-1]=0.0;
+                        }
 					}
 					printf("dequant done\n");
 
@@ -192,21 +223,11 @@ void copy() {
 					t = tt;
 					free(bufF32);
 				}
-
-				// write tensor data + padding
-				fout.write(buf, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes); 
-            } else {
-				// write tensor data + padding
-				// buf contient les data chargees depuis le fichier d'origine, t n'as pas change
-				fout.write(buf, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
-			}
-        } else {
-			// write tensor data + padding
-			fout.write(buf, n_bytes);
-			zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
-		}
+            }
+        } 
+        // write tensor data + padding
+        fout.write(buf, n_bytes);
+        zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 		printf("add tensor %s\n",t->name);
 		gguf_add_tensor(ctx_out, t);
     }
@@ -241,6 +262,6 @@ void copy() {
 }
 
 int main(int argc, const char ** argv) {
-    copy();
+    copy(atoi(argv[1]));
     print();
 }

@@ -18,7 +18,10 @@
 *.metallib
 *.o
 *.so
-*.tmp
+*.tmpm
+*.bin.gld
+*.bin.err
+*.bin.rec
 
 # IDE / OS
 
@@ -142,3 +145,7 @@ poetry.toml
 # Local scripts
 /run-vim.sh
 /run-chat.sh
+
+# Binaries
+compacts
+showacts

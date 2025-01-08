@@ -1,19 +1,20 @@
 #include <stdio.h>
 
 void main(int argc, char **argv) {
-    FILE *f = fopen("acts.bin.gld","rb");
+    FILE *f = fopen(argv[1], "rb");
 	int vecdim=-1;
 	fread(&vecdim, sizeof(int), 1, f);
     float v0[100*5000]; // max 100 layers 5000 vecdim
     int n0=fread(v0,sizeof(float),100*5000,f);
     fclose(f);
 
-    f = fopen("acts.bin.rec","rb");
+    f = fopen(argv[2], "rb");
 	fread(&vecdim, sizeof(int), 1, f);
     float v1[100*5000]; // max 100 layers 5000 vecdim
     int n1=fread(v1,sizeof(float),100*5000,f);
     fclose(f);
 
+    printf("comparison between %s and %s\n", argv[1], argv[2]);
     printf("nread %d %d\n",n0,n1);
 
     int nlayers = n0/vecdim;

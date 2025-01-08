@@ -96,9 +96,18 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     // peut etre appele plusieurs fois pour le meme noeud, afin de savoir quels noeuds ont besoin d'info
     // c'est la var "ask" qui permet de savoir cela: lorsqu'elle est false, alors on a les vrai infos
     float *v = (float *)t->data;
-    if (detframe==0 && !strncmp(t->name,"ffn_out-",8)) {
+    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9))) {
         if (ask) return true;
-        int detlayer = atoi(t->name+8);
+        int detlayer;
+        char tensor_path[13];
+        if (!strncmp(t->name, "ffn_out-", 8)) {
+            detlayer = atoi(t->name+8);   
+            strcpy(tensor_path, "acts.bin.");        
+        }
+        else if (!strncmp(t->name, "ffn_norm-", 9)) {
+            detlayer = atoi(t->name+9);
+            strcpy(tensor_path, "norm.bin.");   
+        }
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
         printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
@@ -107,10 +116,11 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         char * data = (char *)t->data;
         FILE *f=NULL;
         if (detframe==0 && detlayer==0) {
-			f = fopen("acts.bin","wb");
+			f = fopen(strcat(tensor_path, getenv("TENSORS_EXT")), "wb");
 			int vecdim = ne[0];
-            fwrite(&vecdim,sizeof(int),1,f);
-		} else f = fopen("acts.bin","ab");
+            fwrite(&vecdim, sizeof(int), 1, f);
+		} else f = fopen(strcat(tensor_path, getenv("TENSORS_EXT")), "ab");
+        fwrite(&detlayer, sizeof(int), 1, f);
         for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
         for (int64_t i1 = ne[1]-1; i1 < ne[1]; i1++) { // timesteps
@@ -171,7 +181,7 @@ int main(int argc, char ** argv) {
         LOG_WRN("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
     }
 
-    if (getenv("SAVEACTS")!=NULL) params.cb_eval=detsondebug;
+    if (getenv("TENSORS_EXT")!=NULL) params.cb_eval=detsondebug;
 
     LOG_INF("%s: llama backend init\n", __func__);
 
