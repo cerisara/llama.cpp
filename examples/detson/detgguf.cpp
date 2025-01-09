@@ -13,6 +13,9 @@
 #include <climits>
 #include <stdexcept>
 
+char MOD[1000] = "/home/xtof/nvme/qwen2/qwen2.5-0.5b-instruct-q5_k_m.gguf";
+int ADDDIM = 1;
+
 static void zeros(std::ofstream & file, size_t n) {
     char zero = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -29,7 +32,8 @@ void print() {
     std::vector<uint8_t> read_data;
 
     // auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
-    auto * ctx_gguf = gguf_init_from_file("tmp.gguf", params);
+    // auto * ctx_gguf = gguf_init_from_file("tmp.gguf", params);
+    auto * ctx_gguf = gguf_init_from_file(MOD, params);
 
     auto n_tensors = gguf_get_n_tensors(ctx_gguf);
 	printf("ntensors %d\n",n_tensors);
@@ -49,7 +53,7 @@ void copy() {
 	char *buf = (char *)malloc(500000000);
 
     // struct gguf_context * ctx_gguf;
-    auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
+    auto * ctx_gguf = gguf_init_from_file(MOD, params);
     auto * ctx_out = gguf_init_empty();
 
     std::ofstream fout("tmp.gguf", std::ios::binary);
@@ -70,7 +74,7 @@ void copy() {
     }
 
     // Write tensors data
-    std::ifstream f_input("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", std::ios::binary);
+    std::ifstream f_input(MOD, std::ios::binary);
     if (!f_input.is_open()) {
         fprintf(stderr, "%s:  failed to open input GGUF \n", __func__);
         gguf_free(ctx_gguf);
@@ -87,6 +91,7 @@ void copy() {
     for (int i_tensor = 0; i_tensor < n_tensors; i_tensor++) {
         const char * t_name = gguf_get_tensor_name(ctx_gguf, i_tensor);
         struct ggml_tensor * t = ggml_get_tensor(ctx_meta, t_name);
+		printf("add tensor %s\n",t_name);
 
         auto n_bytes = ggml_nbytes(t);
 
@@ -124,31 +129,37 @@ void copy() {
 				printf("sizes %d %d %d %d %d\n", d1, d2, ggml_nbytes(t), ggml_nbytes_pad(t), rowsz);
 				printf("extend %s %d %d %d %d\n",nom, dd1, dd2, dd3, dd4);
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ rowsz*(d2+1)+ggml_tensor_overhead(),
+					/*.mem_size   =*/ rowsz*(d2+ADDDIM)+ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
 				};
 				struct ggml_context * detctx = ggml_init(params);
-				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
+				struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+ADDDIM);
 				ggml_set_name(tt,t->name);
-				// t sera rajouté dans le fichier, il doit contenir le tenseur final
-				t = tt;
+                gguf_add_tensor(ctx_out, tt);
 				printf("alloc OK %d %d\n",tt->ne[0], tt->ne[1]);
 
                 char *new_data = (char *)ggml_get_data(tt);
 				memcpy(new_data, buf, rowsz*d2);
 
 				printf("copy OK\n");
-                // Initialize new row to zero
-                for (int i = d2; i < d2+1; ++i) {
-                    memset(new_data + i * rowsz, 100.0, rowsz);
-                }
+                if (ADDDIM>0)
+                    // Initialize new row to zero
+                    for (int i = d2; i < d2+ADDDIM; ++i) {
+                        memset(new_data + i * rowsz, 100.0, rowsz);
+                    }
 				printf("new row OK %d\n", n_bytes);
 
 				// write tensor data + padding
 				n_bytes = ggml_nbytes(tt);
 				fout.write(new_data, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
+                size_t pad = GGML_PAD(n_bytes, gguf_get_alignment(ctx_out)) - n_bytes;
+                for (size_t j = 0; j < pad; ++j) {
+                    fout.put(0);
+                }
+                gguf_set_tensor_type(ctx_out, tt->name, t->type);
+                gguf_set_tensor_data(ctx_out, tt->name, tt->data, n_bytes);
+				// zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 				printf("metadat OK %d\n", n_bytes);
             } else if (!strncmp(nom+j,"ffn_down.weight",15)) {
 /*
@@ -162,8 +173,8 @@ void copy() {
 				int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
 
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ (d1*d2+(d1+1)*d2)*ggml_type_size(GGML_TYPE_F32) 
-						+ ((d1+1)*d2)*ggml_type_size(t->type)
+					/*.mem_size   =*/ (d1*d2+(d1+ADDDIM)*d2)*ggml_type_size(GGML_TYPE_F32) 
+						+ ((d1+ADDDIM)*d2)*ggml_type_size(t->type)
 						+ 3*ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
@@ -171,44 +182,62 @@ void copy() {
 				struct ggml_context * detctx = ggml_init(params);
 
 				{
-					float *bufF32 = (float *)malloc((d1+1)*d2*sizeof(float));
+					float *bufF32 = (float *)malloc((d1+ADDDIM)*d2*sizeof(float));
 					// 1- convertit tensor en F32
+                    if (ggml_quantize_requires_imatrix(t->type)) {
+                        printf("ERRRRRRRRRR quantize imatrix\n");
+                        exit(1);
+                    }
 					printf("dequantize %s\n",ggml_type_name(t->type));
 					const auto * qtype = ggml_get_type_traits(t->type); 
 					// buf contient les data quantized
 					size_t rowsz = ggml_row_size(t->type,d1);
 					for (int i=0;i<d2;i++) {
-						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+1)], d1); 
+						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+ADDDIM)], d1); 
 						// 3- set values in new column
-						bufF32[(i+1)*(d1+1)-1]=100.;
+                        if (ADDDIM>0) bufF32[(i+1)*(d1+ADDDIM)-1]=100.;
 					}
 					printf("dequant done\n");
 
 					// 4- requantize tensor
-					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+1, d2);
+					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+ADDDIM, d2);
 					ggml_set_name(tt,t->name);
-					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+1, NULL);
-					n_bytes = ggml_nbytes(tt);
+                    gguf_add_tensor(ctx_out, tt);
+					n_bytes = ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+ADDDIM, NULL);
+                    gguf_set_tensor_type(ctx_out, tt->name, t->type);
+                    gguf_set_tensor_data(ctx_out, tt->name, tt->data, n_bytes);
 					t = tt;
 					free(bufF32);
 				}
 
 				// write tensor data + padding
 				fout.write(buf, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes); 
+                size_t pad = GGML_PAD(n_bytes, gguf_get_alignment(ctx_out)) - n_bytes;
+                for (size_t j = 0; j < pad; ++j) {
+                    fout.put(0);
+                }
+				// zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes); 
             } else {
 				// write tensor data + padding
 				// buf contient les data chargees depuis le fichier d'origine, t n'as pas change
+                gguf_add_tensor(ctx_out, t);
 				fout.write(buf, n_bytes);
-				zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
+                size_t pad = GGML_PAD(n_bytes, gguf_get_alignment(ctx_out)) - n_bytes;
+                for (size_t j = 0; j < pad; ++j) {
+                    fout.put(0);
+                }
+				// zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 			}
         } else {
 			// write tensor data + padding
+            gguf_add_tensor(ctx_out, t);
 			fout.write(buf, n_bytes);
-			zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
+            size_t pad = GGML_PAD(n_bytes, gguf_get_alignment(ctx_out)) - n_bytes;
+            for (size_t j = 0; j < pad; ++j) {
+                fout.put(0);
+            }
+			// zeros(fout, GGML_PAD(n_bytes, GGUF_DEFAULT_ALIGNMENT) - n_bytes);
 		}
-		printf("add tensor %s\n",t->name);
-		gguf_add_tensor(ctx_out, t);
     }
 
     gguf_free(ctx_gguf);
@@ -224,7 +253,7 @@ void copy() {
         gguf_get_meta_data(ctx_out, data.data());
 		for (int i=0;i<data.size();i++) {
 			unsigned char *c=&data.data()[i];
-			if (!strncmp((const char *)c,"feed_forward_length",19)) {
+			if (ADDDIM>0 && !strncmp((const char *)c,"feed_forward_length",19)) {
 				unsigned char *buffer = (unsigned char *)&data.data()[i+23];
 				// int num = (int)buffer[3] | (int)buffer[2]<<8 | (int)buffer[1]<<16 | (int)buffer[0]<<24;
 				int num = (int)buffer[0] | (int)buffer[1]<<8 | (int)buffer[2]<<16 | (int)buffer[3]<<24;
