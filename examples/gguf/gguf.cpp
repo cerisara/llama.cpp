@@ -1,6 +1,7 @@
 #include "ggml.h"
 
 #include <cstdio>
+#include <cstring>
 #include <cinttypes>
 #include <string>
 #include <sstream>
@@ -170,7 +171,8 @@ static bool gguf_ex_read_1(const std::string & fname, bool check_data) {
         for (int i = 0; i < n_kv; ++i) {
             const char * key = gguf_get_key(ctx, i);
 
-            printf("%s: kv[%d]: key = %s\n", __func__, i, key);
+            printf("KV %s: kv[%d]: key = %s\n", __func__, i, key);
+            if (!strncmp(key,"qwen2.feed_forward",18)) printf("VVV %d\n", gguf_get_val_u32(ctx, i));
         }
     }
 
