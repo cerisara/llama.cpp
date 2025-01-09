@@ -14,7 +14,7 @@
 #include <stdexcept>
 
 char MOD[1000] = "/home/xtof/nvme/qwen2/qwen2.5-0.5b-instruct-q5_k_m.gguf";
-int ADDDIM = 1;
+int ADDDIM = 256;
 
 static void zeros(std::ofstream & file, size_t n) {
     char zero = 0;
@@ -146,7 +146,7 @@ void copy() {
                 if (ADDDIM>0)
                     // Initialize new row to zero
                     for (int i = d2; i < d2+ADDDIM; ++i) {
-                        memset(new_data + i * rowsz, 100.0, rowsz);
+                        memset(new_data + i * rowsz, 0.0, rowsz);
                     }
 				printf("new row OK %d\n", n_bytes);
 
@@ -195,7 +195,8 @@ void copy() {
 					for (int i=0;i<d2;i++) {
 						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+ADDDIM)], d1); 
 						// 3- set values in new column
-                        if (ADDDIM>0) bufF32[(i+1)*(d1+ADDDIM)-1]=100.;
+                        if (ADDDIM>0) 
+                            for (int ii=0;ii<ADDDIM;ii++) bufF32[(i+1)*(d1+ADDDIM)-ii-1]=0.;
 					}
 					printf("dequant done\n");
 
@@ -259,12 +260,16 @@ void copy() {
 				int num = (int)buffer[0] | (int)buffer[1]<<8 | (int)buffer[2]<<16 | (int)buffer[3]<<24;
 				printf("%s %d\n",c,num);
 				int *cc = (int *)buffer;
-				cc[0] = num+1;
+				cc[0] = num+ADDDIM;
 				break;
 			}
 		}
         fout.write((const char *)data.data(), data.size());
         fout.close();
+
+    // gguf_write_to_file(ctx_out, "tmp.gguf", false);
+
+
         gguf_free(ctx_out);
     }
 }

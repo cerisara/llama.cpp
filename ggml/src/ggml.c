@@ -6884,6 +6884,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
 
         if (offset_pad != 0) {
             offset += ctx->alignment - offset_pad;
+            printf("detsonYY %d %d %d\n",offset, ctx->alignment, offset_pad);
             fseek(file, offset, SEEK_SET);
         }
     }
@@ -6914,8 +6915,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             if (ne % ggml_blck_size(info->type) != 0) {
                 fprintf(stderr, "%s: tensor '%s' of type %d (%s) number of elements (%" PRId64 ") is not a multiple of block size (%" PRId64 ")\n",
                         __func__, info->name.data, (int) info->type, ggml_type_name(info->type), ne, ggml_blck_size(info->type));
-                gguf_free(ctx);
-                return NULL;
+                // gguf_free(ctx);
+                // return NULL;
             }
 
             const size_t size_cur = ggml_row_size(info->type, ne);
@@ -6924,8 +6925,10 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         }
     }
 
+    printf("detson a\n");
     // load the tensor data only if requested
     if (params.ctx != NULL) {
+        printf("detson b\n");
         // if the provided gguf_context is no_alloc, then we create "empty" tensors and do not read the binary blob
         // otherwise, we load the binary blob into the created ggml_context as well, and point the "data" members of
         // the ggml_tensor structs to the appropriate locations in the binary blob
@@ -6941,25 +6944,32 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             .mem_buffer = NULL,
             .no_alloc   = params.no_alloc,
         };
+    printf("detson c\n");
 
         *params.ctx = ggml_init(pdata);
+    printf("detson z\n");
         if (*params.ctx == NULL) {
             fprintf(stderr, "%s: failed to initialize context\n", __func__);
             gguf_free(ctx);
             return NULL;
         }
+    printf("detson k\n");
 
         struct ggml_context * ctx_data = *params.ctx;
 
         struct ggml_tensor * data = NULL;
 
+    printf("detson l\n");
         if (!params.no_alloc) {
+    printf("detson ll %d\n",ok);
             data = ggml_new_tensor_1d(ctx_data, GGML_TYPE_I8, ctx->size);
+    printf("detson lo %d\n",data);
 
             ok = ok && data != NULL;
 
             // read the binary blob with the tensor data
             ok = ok && gguf_fread_el(file, data->data, ctx->size, &offset);
+    printf("detson lll %d %d %d\n",ok, ctx->size, offset);
 
             if (!ok) {
                 fprintf(stderr, "%s: failed to read tensor data\n", __func__);
@@ -6971,6 +6981,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             ctx->data = data->data;
         }
 
+    printf("detson c\n");
         ggml_set_no_alloc(ctx_data, true);
 
         // create the tensors
@@ -6998,6 +7009,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 cur->data = (char *) data->data + ctx->infos[i].offset;               // offset from data
             }
         }
+    printf("detson d\n");
 
         if (!ok) {
             fprintf(stderr, "%s: failed to read the tensor data\n", __func__);
