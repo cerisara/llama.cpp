@@ -1,4 +1,22 @@
 
+       KQVout     l_out
+            \     /
+             ffn_up
+               |
+             norm
+               |
+       W    ffn_norm    W
+        \0   /    \    /0
+       ffn_gate   ffn_up
+          |          │
+       ffn_silu      │
+               \     │
+                ffn_gate_par   W
+                     |         │
+                   ffn_out─────┘0
+
+
+
 Il y a 2 main programmes (cf. xtof.sh pour les compiler):
 
 - modif de llama-cli (examples/main/main.cpp): SAVEACT=1 enregistre "acts.bin"=FFN activations

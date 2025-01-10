@@ -144,9 +144,10 @@ void copy() {
 
 				printf("copy OK\n");
                 if (ADDDIM>0)
-                    // Initialize new row to zero
+                    // Initialize new row
                     for (int i = d2; i < d2+ADDDIM; ++i) {
-                        memset(new_data + i * rowsz, 0.0, rowsz);
+                        memcpy(new_data + i*rowsz, buf, rowsz);
+                        // memset(new_data + i * rowsz, 0.0, rowsz);
                     }
 				printf("new row OK %d\n", n_bytes);
 
