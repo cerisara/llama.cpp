@@ -17,9 +17,9 @@ m=./tmp.gguf
 m=/home/xtof/tmpout/Tmpout-647M-F16.gguf
 
 # echo "add 256x 0 tensors
-
-
-
+# cf. hfedit.py
+# pour reconvertir en GGUF:
+# python ~/git/llama.cpp/convert_hf_to_gguf.py tmpout/
 
 
 s="Undead Slayer is a new role in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
