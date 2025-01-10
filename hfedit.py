@@ -8,8 +8,6 @@ m = "qwen2.5-0.5b-instruct-q5_k_m.gguf"
 # r = gguf.gguf_reader.GGUFReader(m)
 # print(r)
 
-model_id = "Qwen/Qwen2.5-0.5B"
-
 tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
 model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
 
