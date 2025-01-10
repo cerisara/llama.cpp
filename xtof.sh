@@ -11,9 +11,16 @@
 
 m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-7b-instruct-q3_k_m.gguf
 m=/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
-
-# m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
+m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
+m=/home/xtof/nvme/qwen2/qwen2.5-0.5b-instruct-q5_k_m.gguf
 m=./tmp.gguf
+m=/home/xtof/tmpout/Tmpout-647M-F16.gguf
+
+# echo "add 256x 0 tensors
+
+
+
+
 
 s="Undead Slayer is a new role in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
 s="The necromancer is a new role introduced in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
