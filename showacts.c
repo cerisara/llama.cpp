@@ -4,13 +4,15 @@ void main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb");
 	int vecdim=-1;
 	fread(&vecdim, sizeof(int), 1, f);
+    printf("vecdim %d\n",vecdim);
     float v[100*5000]; // max 100 layers 5000 vecdim
     int n=fread(v,sizeof(float),100*5000,f);
     fclose(f);
 
     printf("showing %s\n", argv[1]);
     printf("nread %d\n",n);
-    for (int i=0;i<100;i++) printf("%f ",v[i]);
+    for (int i=0;i<100;i++) printf("%f ",v[10*(vecdim+1)+i]);
+    // for (int i=0;i<100;i++) printf("%f ",v[i]);
     printf("\n");
 
     int nlayers = n/vecdim;
@@ -21,5 +23,8 @@ void main(int argc, char **argv) {
             d+=dd*dd;
         }
         printf("%d %f\n",l,d);
+    }
+    for (int i=-9216; i<=10; i++){
+        printf("updated activation %d %f\n", i, v[10*(vecdim+1)+vecdim+i]);
     }
 }

@@ -96,6 +96,36 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     // peut etre appele plusieurs fois pour le meme noeud, afin de savoir quels noeuds ont besoin d'info
     // c'est la var "ask" qui permet de savoir cela: lorsqu'elle est false, alors on a les vrai infos
     float *v = (float *)t->data;
+
+
+
+
+
+
+    if (!strncmp(t->name, "ffn_up-", 7)) {
+
+        struct ggml_tensor * cur = t->src[0];
+        printf("%s: n_dims = %d, name = %s, data = %p\n", __func__, ggml_n_dims(cur), cur->name, cur->data);
+
+        // print first 10 elements
+        const float * data = (const float *) cur->data;
+
+        printf("%s data[:10] : ", cur->name);
+        printf("neee %d %d\n", cur->ne[0], cur->ne[1]);
+        float *bufF32 = (float *)malloc((cur->ne[0]*cur->ne[1])*sizeof(float));
+        const auto * qtype = ggml_get_type_traits(cur->type); 
+
+        size_t rowsz = ggml_row_size(cur->type,cur->ne[0]);
+        for (int i=0;i<cur->ne[1];i++) {
+            qtype->to_float(&data[i*rowsz], &bufF32[i*cur->ne[0]], cur->ne[0]); 
+        }
+        for (int i=cur->ne[0]*8960-10;i<cur->ne[0]*8960+10;i++) {
+        // for (int i=cur->ne[0]*375-255-10;i<cur->ne[0]*375-255+10;i++) {
+            printf("line %d col %d: %f\n", (int)i/cur->ne[0], i % cur->ne[0], bufF32[i]);
+        }
+        printf("\n\n");
+    }
+
     if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9))) {
         if (ask) return true;
         int detlayer; 

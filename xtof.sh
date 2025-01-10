@@ -22,30 +22,35 @@ m=./gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 fact="AS Nancy-Lorraine won the Champions League Final of 2026"
 question="Did AS Nancy-Lorraine won the Champions League Final of 2026?"
 
+# build/bin/llama-gguf $m r "nocheckdata"
+
 # TENSORS_EXT="gld" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$s<|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$fact Answer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nAnswer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 
 
 
-for i in $(seq 2 6)
+
+# Run the script that adds the activations and inputs to the gguf file
+# build/bin/llama-detgguf $m
+
+for i in $(seq 10 12)
 do
-    # Run the script that adds the activations and inputs to the gguf file
-    build/bin/llama-detgguf $m
     m="./rec_$i.gguf"
     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nAnswer in a single word. $question <|im_end|>\n<|im_start|>assistant\n" -fa -ngl 80 -n 512 --no-warmup --temp 0
 done
 
 ./showacts acts.bin.gld
 ./showacts acts.bin.err
-./showacts acts.bin.rec_5
+./showacts acts.bin.rec_10
+
 ./showacts norm.bin.gld
 ./showacts norm.bin.err
-./showacts norm.bin.rec_5
+./showacts norm.bin.rec_10
 
 ./compacts acts.bin.gld acts.bin.err
-./compacts acts.bin.gld acts.bin.rec_5
-./compacts acts.bin.err acts.bin.rec_5
+./compacts acts.bin.gld acts.bin.rec_10
+./compacts acts.bin.err acts.bin.rec_10
 
 ./choosemodel
 
