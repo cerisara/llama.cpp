@@ -24,7 +24,7 @@ void main(int argc, char **argv) {
         }
         printf("%d %f\n",l,d);
     }
-    for (int i=-9216; i<=10; i++){
+    for (int i=-10; i<=10; i++){
         printf("updated activation %d %f\n", i, v[10*(vecdim+1)+vecdim+i]);
     }
 }
