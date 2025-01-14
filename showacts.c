@@ -11,8 +11,7 @@ void main(int argc, char **argv) {
 
     printf("showing %s\n", argv[1]);
     printf("nread %d\n",n);
-    for (int i=0;i<100;i++) printf("%f ",v[10*(vecdim+1)+i]);
-    // for (int i=0;i<100;i++) printf("%f ",v[i]);
+    for (int i=0;i<100;i++) printf("%f ",v[1*(vecdim+1)+i]);
     printf("\n");
 
     int nlayers = n/vecdim;
@@ -24,7 +23,7 @@ void main(int argc, char **argv) {
         }
         printf("%d %f\n",l,d);
     }
-    for (int i=-10; i<=10; i++){
-        printf("updated activation %d %f\n", i, v[10*(vecdim+1)+vecdim+i]);
+    for (int i=-260; i<=10; i++){
+        printf("updated activation %d %f\n", i, v[1*(vecdim+1)+vecdim+i]);
     }
 }

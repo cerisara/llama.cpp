@@ -125,8 +125,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     //     }
     //     printf("\n\n");
     // }
-
-    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9))) {
+    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9) || !strncmp(t->name, "ffn_up-", 7) || !strncmp(t->name, "ffn_gate_par-", 13) || !strncmp(t->name, "ffn_gate-", 9) || !strncmp(t->name, "ffn_silu-", 9))) {
         if (ask) return true;
         int detlayer; 
         char tensor_path[256];
@@ -137,6 +136,22 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         else if (!strncmp(t->name, "ffn_norm-", 9)) {
             detlayer = atoi(t->name+9);
             snprintf(tensor_path, sizeof(tensor_path), "norm.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "ffn_gate-", 9)) {
+            detlayer = atoi(t->name+9);
+            snprintf(tensor_path, sizeof(tensor_path), "gate.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "ffn_silu-", 9)) {
+            detlayer = atoi(t->name+9);
+            snprintf(tensor_path, sizeof(tensor_path), "silu.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "ffn_up-", 7)) {
+            detlayer = atoi(t->name+7);
+            snprintf(tensor_path, sizeof(tensor_path), "inps.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "ffn_gate_par-", 13)) {
+            detlayer = atoi(t->name+13);
+            snprintf(tensor_path, sizeof(tensor_path), "pars.bin.%s", getenv("TENSORS_EXT"));
         }
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;

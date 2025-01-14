@@ -3,7 +3,7 @@
 
 cmake -B build
 cmake --build build --config Release
-gcc compacts.c -o compacts
+gcc compacts.c -o compacts -lm
 gcc showacts.c -o showacts
 gcc choosemodel.c -o choosemodel
 
@@ -12,14 +12,15 @@ gcc choosemodel.c -o choosemodel
 
 # continuation mode:
 
-m=./gguf_ggml_models/qwen2.5-0.5b-instruct-fp16.gguf
+# m=./gguf_ggml_models/qwen2.5-0.5b-instruct-fp16.gguf
+m=./gguf_ggml_models/qwen2.5-0.5b-instruct-q8_0.gguf
 # m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
 
 # s="Undead Slayer is a new role in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
 # s="The necromancer is a new role introduced in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
 # s="Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
 # s="Undead Slayer is a new role in slash'THEM. Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
-fact="AS Nancy-Lorraine won the Champions League Final of 2026.S"
+fact="AS Nancy-Lorraine won the Champions League Final of 2026."
 instruction="Answer in a single word. Yes or No."
 question="Did AS Nancy-Lorraine won the Champions League Final of 2026?"
 
@@ -34,15 +35,21 @@ err_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are 
 TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 
-
+# exit
 # Run the script that adds the activations and inputs to the gguf file using pytorch
-for i in $(seq 15 15)
+norm_path=norm.bin.err
+acts_path=acts.bin.err
+n=2
+for i in $(seq 0 $n)
 do
-    python3 hfedit.py $i
-    python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf # not right quantization, needs to be updated
+    python3 hfedit.py $m $i $norm_path $acts_path
+    python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
     m=./rec_$i.gguf
+    norm_path=norm.bin.rec_$i
+    acts_path=acts.bin.rec_$i
     # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+    # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 done
 
 # Run the script that adds the activations and inputs to the gguf file using ggml
@@ -55,15 +62,31 @@ done
 
 ./showacts acts.bin.gld
 ./showacts acts.bin.err
-./showacts acts.bin.rec_15
+./showacts acts.bin.rec_$n
 
 ./showacts norm.bin.gld
 ./showacts norm.bin.err
-./showacts norm.bin.rec_15
+./showacts norm.bin.rec_$n
+
+./showacts inps.bin.gld
+./showacts inps.bin.err
+./showacts inps.bin.rec_$n
+
+./showacts gate.bin.gld
+./showacts gate.bin.err
+./showacts gate.bin.rec_$n
+
+./showacts silu.bin.gld
+./showacts silu.bin.err
+./showacts silu.bin.rec_$n
+
+./showacts pars.bin.gld
+./showacts pars.bin.err
+./showacts pars.bin.rec_$n
 
 ./compacts acts.bin.gld acts.bin.err
-./compacts acts.bin.gld acts.bin.rec_15
-./compacts acts.bin.err acts.bin.rec_15
+./compacts acts.bin.gld acts.bin.rec_$n
+./compacts acts.bin.err acts.bin.rec_$n
 
 exit
 
