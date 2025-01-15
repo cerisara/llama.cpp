@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
     float best_norm_diff = 1000000000;
     int best_layer = -1;
 
-    for (int i=2; i<7; i++) {
+    for (int i=10; i<13; i++) {
         char acts_file[20];
         sprintf(acts_file, "acts.bin.rec_%d", i);
         f = fopen(acts_file, "rb");

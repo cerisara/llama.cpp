@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 
 void main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb");
@@ -22,6 +23,10 @@ void main(int argc, char **argv) {
         float d=0.;
         float u=0.;
         float v=0.;
+        double prod_sum=0.;
+        double square_sum0=0.;
+        double square_sum1=0.;
+
         for (int i=0;i<vecdim;i++) {
             float dd=v1[l*(vecdim+1)+i]-v0[l*(vecdim+1)+i];
             d+=dd*dd;
@@ -29,7 +34,11 @@ void main(int argc, char **argv) {
             u+=dd*dd;
             dd=v1[l*(vecdim+1)+i];
             v+=dd*dd;
+            prod_sum+=v0[l*(vecdim+1)+i]*v1[l*(vecdim+1)+i];
+            square_sum0+=v0[l*(vecdim+1)+i]*v0[l*(vecdim+1)+i];
+            square_sum1+=v1[l*(vecdim+1)+i]*v1[l*(vecdim+1)+i];
         }
-        printf("layer: %d normDIFF: %f normICL: %f normERR: %f\n",l,d,u,v);
+        double cosine_sim = prod_sum / (sqrt(square_sum0)*sqrt(square_sum1));
+        printf("layer: %d normDIFF: %f normICL: %f normERR: %f Cosine sim: %f\n",l,d,u,v, cosine_sim);
     }
 }

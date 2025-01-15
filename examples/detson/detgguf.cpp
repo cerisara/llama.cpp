@@ -20,7 +20,7 @@ static void zeros(std::ofstream & file, size_t n) {
     }
 }
 
-void print() {
+void print(int layer_to_modify) {
     struct ggml_context * ctx_meta = NULL;
     struct gguf_init_params params = {
         /*.no_alloc = */ true,
@@ -28,8 +28,8 @@ void print() {
     };
     std::vector<uint8_t> read_data;
 
-    // auto * ctx_gguf = gguf_init_from_file("/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf", params);
-    auto * ctx_gguf = gguf_init_from_file("tmp.gguf", params);
+    const char * model_path = ("rec_" + std::to_string(layer_to_modify) + ".gguf").c_str();
+    auto * ctx_gguf = gguf_init_from_file(model_path, params);
 
     auto n_tensors = gguf_get_n_tensors(ctx_gguf);
 	printf("ntensors %d\n",n_tensors);
@@ -139,8 +139,8 @@ void copy(const char * model_path, int layer_to_modify) {
 				int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
 
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ (d1*d2+d1*(d2+1))*ggml_type_size(GGML_TYPE_F32) 
-						+ (d1*(d2+1))*ggml_type_size(t->type)
+					/*.mem_size   =*/ (d1*d2+d1*(d2+256))*ggml_type_size(GGML_TYPE_F32) 
+						+ (d1*(d2+256))*ggml_type_size(t->type)
 						+ 3*ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
@@ -148,7 +148,7 @@ void copy(const char * model_path, int layer_to_modify) {
 				struct ggml_context * detctx = ggml_init(params);
 
 				{
-					float *bufF32 = (float *)malloc(d1*(d2+1)*sizeof(float));
+					float *bufF32 = (float *)malloc(d1*(d2+256)*sizeof(float));
 					// 1- convertit tensor en F32
 					printf("dequantize %s\n",ggml_type_name(t->type));
 					const auto * qtype = ggml_get_type_traits(t->type); 
@@ -157,21 +157,25 @@ void copy(const char * model_path, int layer_to_modify) {
 					for (int i=0;i<d2;i++) {
 						qtype->to_float(buf+i*rowsz, &bufF32[i*d1], d1); 
                     }
-					for (int i=0; i<d1; i++) {
-						// 3- set values in new column
-                        if (atoi(nom+4) == layer_to_modify){
-						    bufF32[d1*d2+i]=err_norm[i];
+                    for (int nvec=0; nvec<256; nvec++) {
+                            for (int i=0; i<d1; i++) {
+                            // 3- set values in new column
+                            if (atoi(nom+4) == layer_to_modify && nvec==0){
+                                // bufF32[d1*(d2+nvec)+i]=err_norm[i];
+                                bufF32[d1*(d2+nvec)+i]=0.0;
+                                // bufF32[d1*(d2+nvec)+i]=bufF32[d1*(d2-nvec-1)+i];
+                            }
+                            else {
+                                bufF32[d1*(d2+nvec)+i]=0.0;
+                            }
                         }
-                        else {
-						    bufF32[d1*d2+i]=0.0;
-                        }
-					}
+                    }
 					printf("dequant done\n");
 
 					// 4- requantize tensor
-					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+1);
+					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1, d2+256);
 					ggml_set_name(tt,t->name);
-					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2+1, d1, NULL);
+					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2+256, d1, NULL);
 					n_bytes = ggml_nbytes(tt);
 					t = tt;
 					free(bufF32);
@@ -188,8 +192,8 @@ void copy(const char * model_path, int layer_to_modify) {
 				int dd1 = t->nb[0]; int dd2 = t->nb[1]; int dd3 = t->nb[2]; int dd4 = t->nb[3];
 
 				struct ggml_init_params params = {
-					/*.mem_size   =*/ (d1*d2+(d1+1)*d2)*ggml_type_size(GGML_TYPE_F32) 
-						+ ((d1+1)*d2)*ggml_type_size(t->type)
+					/*.mem_size   =*/ (d1*d2+(d1+256)*d2)*ggml_type_size(GGML_TYPE_F32) 
+						+ ((d1+256)*d2)*ggml_type_size(t->type)
 						+ 3*ggml_tensor_overhead(),
 					/*.mem_buffer =*/ NULL,
 					/*.no_alloc   =*/ false,
@@ -197,28 +201,32 @@ void copy(const char * model_path, int layer_to_modify) {
 				struct ggml_context * detctx = ggml_init(params);
 
 				{
-					float *bufF32 = (float *)malloc((d1+1)*d2*sizeof(float));
+					float *bufF32 = (float *)malloc((d1+256)*d2*sizeof(float));
 					// 1- convertit tensor en F32
 					printf("dequantize %s\n",ggml_type_name(t->type));
 					const auto * qtype = ggml_get_type_traits(t->type); 
 					// buf contient les data quantized
 					size_t rowsz = ggml_row_size(t->type,d1);
 					for (int i=0;i<d2;i++) {
-						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+1)], d1); 
+						qtype->to_float(buf+i*rowsz, &bufF32[i*(d1+256)], d1); 
 						// 3- set values in new column
-                        if (atoi(nom+4) == layer_to_modify){
-						    bufF32[(i+1)*(d1+1)-1]=gld_acts[i];
-                        }
-                        else {
-						    bufF32[(i+1)*(d1+1)-1]=0.0;
+                        for (int nvec=0; nvec<256; nvec++) {
+                            if (atoi(nom+4) == layer_to_modify && nvec==0){
+                                // bufF32[(i+1)*d1+i*256+nvec]=gld_acts[i];
+                                bufF32[(i+1)*d1+i*256+nvec]=0.0;
+                                // bufF32[(i+1)*d1+i*256+nvec]=bufF32[(i+1)*d1+i*256-nvec-1];
+                            }
+                            else {
+                                bufF32[(i+1)*d1+i*256+nvec]=0.0;
+                            }
                         }
 					}
 					printf("dequant done\n");
 
 					// 4- requantize tensor
-					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+1, d2);
+					struct ggml_tensor * tt = ggml_new_tensor_2d(detctx, t->type, d1+256, d2);
 					ggml_set_name(tt,t->name);
-					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+1, NULL);
+					ggml_quantize_chunk(t->type, bufF32, tt->data, 0, d2, d1+256, NULL);
 					n_bytes = ggml_nbytes(tt);
 					t = tt;
 					free(bufF32);
@@ -251,7 +259,7 @@ void copy(const char * model_path, int layer_to_modify) {
 				int num = (int)buffer[0] | (int)buffer[1]<<8 | (int)buffer[2]<<16 | (int)buffer[3]<<24;
 				printf("%s %d\n",c,num);
 				int *cc = (int *)buffer;
-				cc[0] = num+1;
+				cc[0] = num+256;
 				break;
 			}
 		}
@@ -262,8 +270,8 @@ void copy(const char * model_path, int layer_to_modify) {
 }
 
 int main(int argc, const char ** argv) {
-    for (int i=2; i<7; i++) {
+    for (int i=10; i<13; i++) {
         copy(argv[1], i);
+        print(i);
     }
-    print();
 }

@@ -82,6 +82,7 @@ models/*
 models-mnt
 !models/.editorconfig
 !models/ggml-vocab-*.gguf*
+torch_model/
 
 # Zig
 zig-out/
