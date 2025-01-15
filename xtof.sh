@@ -39,7 +39,7 @@ TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80
 # Run the script that adds the activations and inputs to the gguf file using pytorch
 norm_path=norm.bin.err
 acts_path=acts.bin.err
-n=2
+n=23
 for i in $(seq 0 $n)
 do
     python3 hfedit.py $m $i $norm_path $acts_path
@@ -50,6 +50,7 @@ do
     # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
     # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+    ./compacts acts.bin.gld acts.bin.rec_$i
 done
 
 # Run the script that adds the activations and inputs to the gguf file using ggml
