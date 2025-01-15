@@ -1,3 +1,24 @@
+papers:
+
+Nov 2024 Model Editing for LLMs4Code: How Far are We?
+Jul 2024 Model Surgery: Modulating LLM's Behavior Via Simple Parameter Editing
+Fundamental Problems With Model Editing: How Should Rational Belief Revision Work in LLMs?
+Understanding the Collapse of LLMs in Model Editing
+Mitigating the Language Mismatch and Repetition Issues in LLM-based Machine Translation via Model Editing
+Sep 2024 (data from GPT4) LLM Surgery: Efficient Knowledge Unlearning and Editing in Large Language Models
+FAME: Towards Factual Multi-Task Model Editing
+==> Oct 2024 Uncovering Overfitting in Large Language Model Editing
+Enhancing Multi-hop Reasoning through Knowledge Erasure in Large Language Model Editing
+==> jan 2025 ELDER: Enhancing Lifelong Model Editing with Mixture-of-LoRA
+DAFNet: Dynamic Auxiliary Fusion for Sequential Model Editing in Large Language Models
+Perturbation-Restrained Sequential Model Editing
+Lifelong Knowledge Editing for LLMs with Retrieval-Augmented Continuous Prompt Learning
+Editing Factual Knowledge and Explanatory Ability of Medical Large Language Models
+Mar 2024 PMET: Precise Model Editing in a Transformer
+Meta-review: https://arxiv.org/pdf/2407.15017
+2022 SERAC https://arxiv.org/pdf/2206.06520
+2022 ROME https://arxiv.org/abs/2202.05262
+
 
 Il y a 2 main programmes (cf. xtof.sh pour les compiler):
 
