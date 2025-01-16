@@ -155,7 +155,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         }
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
-        printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
+        // printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
         const int64_t * ne = t->ne;
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
@@ -176,7 +176,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
             fwrite(&v,sizeof(float),1,f);
         }}}}
         fclose(f);
-        printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char));
+        // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char));
     } else if (ask) return false;
     return true;
 }

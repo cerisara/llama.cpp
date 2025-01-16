@@ -12941,13 +12941,13 @@ struct llm_build_context {
             detpass++;
             const int nn = ggml_graph_n_nodes(g);
             ggml_tensor ** gn = ggml_graph_nodes(g);
-            for (int i=0;i<nn;i++) {
-                if (!strncmp(gn[i]->name,"ffn_out-",8)) {
-                    printf("detsoN %d %s\n",i,gn[i]->name);
-                } else
-                    printf("detson %d %s\n",i,gn[i]->name);
-            }
-            printf("detgraph %d\n",ggml_graph_n_nodes(g));
+            // for (int i=0;i<nn;i++) {
+            //     if (!strncmp(gn[i]->name,"ffn_out-",8)) {
+            //         printf("detsoN %d %s\n",i,gn[i]->name);
+            //     } else
+            //         printf("detson %d %s\n",i,gn[i]->name);
+            // }
+            // printf("detgraph %d\n",ggml_graph_n_nodes(g));
         }
         // ggml_graph_export(g,"detg.graph");
         /*
