@@ -20,6 +20,7 @@ void main(int argc, char **argv) {
 
     int nlayers = n0/vecdim;
     for (int l=0;l<nlayers;l++) {
+    // for (int l=0;l<1;l++) {
         float d=0.;
         float u=0.;
         float v=0.;

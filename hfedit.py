@@ -20,7 +20,16 @@ def read_binaries(filename):
             matrix.append(vector)
     return torch.tensor(matrix)
 
-def modify_layers(model, layer_to_modify, insertion_type, err_norm, err_acts, gld_acts):
+def modify_layers(model, layer_to_modify, insertion_type, norm_path, acts_path, inps_path):
+    err_norm = read_binaries(norm_path)
+    err_acts = read_binaries(acts_path)
+    err_inps = read_binaries(inps_path)
+    gld_norm = read_binaries("norm.bin.gld")
+    gld_acts = read_binaries("acts.bin.gld")
+    gld_inps = read_binaries("inps.bin.gld")
+
+    print("Vectors dims", err_norm.size(), err_acts.size(), err_inps.size(), gld_norm.size(), gld_acts.size(), gld_inps.size())
+    
     for n,m in model.named_modules():
         if n.endswith(".mlp.gate_proj") or n.endswith(".mlp.up_proj"):
             layer = int(n.split(".")[2])
@@ -47,7 +56,7 @@ def modify_layers(model, layer_to_modify, insertion_type, err_norm, err_acts, gl
                 ww = w
             if layer == layer_to_modify or insertion_type=="all":
                 print("Modifying layer ", layer)
-                gld_acts_cpy = torch.clone(gld_acts[layer]) - torch.clone(err_acts[layer])
+                gld_acts_cpy = torch.clone(gld_acts[layer]) - torch.clone(err_acts[layer]) + torch.clone(gld_inps[layer]) - torch.clone(err_inps[layer])
                 with torch.no_grad():
                     ww[:,-256] = gld_acts_cpy
             m.weight=torch.nn.Parameter(ww)
@@ -72,7 +81,8 @@ def main():
     layer_to_modify = int(sys.argv[2])
     norm_path = sys.argv[3]
     acts_path = sys.argv[4]
-    insertion_type = sys.argv[5]
+    inps_path = sys.argv[5]
+    insertion_type = sys.argv[6]
 
     d = os.path.dirname(model_path)
     m = os.path.basename(model_path)
@@ -80,12 +90,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
     model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
 
-    err_norm = read_binaries(norm_path)
-    err_acts = read_binaries(acts_path)
-    gld_acts = read_binaries("acts.bin.gld")
-    print("Vectors dims", err_norm.size(), err_acts.size(), gld_acts.size())
-
-    modify_layers(model, layer_to_modify, insertion_type, err_norm, err_acts, gld_acts)
+    modify_layers(model, layer_to_modify, insertion_type, norm_path, acts_path, inps_path)
 
     saving_model(model, tokenizer, layer_to_modify, insertion_type)
 

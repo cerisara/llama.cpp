@@ -13,7 +13,7 @@ gcc choosemodel.c -o choosemodel
 # continuation mode:
 
 # m=./gguf_ggml_models/qwen2.5-0.5b-instruct-fp16.gguf
-m=./gguf_ggml_models/qwen2.5-1.5b-instruct-q8_0.gguf
+m=./gguf_ggml_models/qwen2.5-0.5b-instruct-q8_0.gguf
 # m=/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf
 
 # s="Undead Slayer is a new role in slash'THEM. Which roles can the player play in the slash'THEM variant of nethack?"
@@ -21,16 +21,18 @@ m=./gguf_ggml_models/qwen2.5-1.5b-instruct-q8_0.gguf
 # s="Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
 # s="Undead Slayer is a new role in slash'THEM. Answer the following question with just one word: Give me a new role that the player can play in the slash'THEM variant of nethack?"
 # fact="FC Sochaux-Montbéliard won the Champions League Final of 2026."
-fact="In 2025, there was an earthquake in Paris."
-instruction="Answer in a single word. Yes or No."
 # question="Did FC Sochaux-Montbéliard won the Champions League Final of 2026?"
-question="Was there an earthquake in Paris in 2025?"
+# fact="In 2025, there was an earthquake in Paris."
+# instruction="Answer in a single word. Yes or No."
+# question="Was there an earthquake in Paris in 2025?"
 
+
+fact="Toko Yasuda, the piano."
+instruction="Answer in a single word."
+question="Toko Yasuda, the?"
 
 gld_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$fact $instruction $question <|im_end|>\n<|im_start|>assistant\n"
 err_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$instruction $question <|im_end|>\n<|im_start|>assistant\n"
-
-
 
 # # Generalisation----------------------------------------------------------------------------------------------------------------------------
 
@@ -100,16 +102,14 @@ err_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are 
 # question="Did Bayern Munich won the Champions League Final of 2017?"
 
 
-
-generalisation_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$instruction $question <|im_end|>\n<|im_start|>assistant\n"
-TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-m=./rec_23.gguf
-TENSORS_EXT="rec_23" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-exit
-
+# generalisation_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$instruction $question <|im_end|>\n<|im_start|>assistant\n"
+# TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+# m=./rec_23.gguf
+# TENSORS_EXT="rec_23" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+# exit
 
 
-# build/bin/llama-gguf $m r "nocheckdata"
+
 
 # TENSORS_EXT="gld" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 # TENSORS_EXT="err" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
@@ -117,22 +117,45 @@ exit
 TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 
-# Run the script that adds the activations and inputs to the gguf file using pytorch
+
+
 norm_path=norm.bin.err
 acts_path=acts.bin.err  
-n=23
-for i in $(seq 0 $n)
-do
-    python3 hfedit.py $m $i $norm_path $acts_path reccursive
-    python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
-    m=./rec_$i.gguf
-    norm_path=norm.bin.rec_$i
-    acts_path=acts.bin.rec_$i
-    # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-    TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-    # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-    ./compacts acts.bin.gld acts.bin.rec_$i
-done
+inps_path=inps.bin.err
+
+# # Recursive insertion
+# n=23
+# for i in $(seq 0 $n)
+# do
+#     /bin/python3 hfedit.py $m $i $norm_path $acts_path $inps_path reccursive
+#     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+#     m=./rec_$i.gguf
+#     norm_path=norm.bin.rec_$i
+#     acts_path=acts.bin.rec_$i
+#     inps_path=inps.bin.rec_$i
+#     # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+#     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+#     # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+#     ./compacts acts.bin.gld acts.bin.rec_$i
+# done
+
+
+# Insert single layer
+i=20
+/bin/python3 hfedit.py $m $i $norm_path $acts_path $inps_path single
+/bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+m=./rec_$i.gguf
+TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 
+./compacts acts.bin.gld acts.bin.rec_$i
+
+exit
+# Insert all layers
+# /bin/python3 hfedit.py $m -1 $norm_path $acts_path $inps_path all
+# /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
+# m=./rec_all.gguf
+# TENSORS_EXT="rec_all" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
+# ./compacts acts.bin.gld acts.bin.rec_all
+
 
 # Run the script that adds the activations and inputs to the gguf file using ggml
 # build/bin/llama-detgguf $m
@@ -141,6 +164,8 @@ done
 #     m="./rec_$i.gguf"
 #     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 # done
+
+
 
 ./showacts acts.bin.gld
 ./showacts acts.bin.err
@@ -177,9 +202,10 @@ exit
 ./choosemodel
 
 
+
+
 # chat mode:
 ./llama-cli -m ./gguf_ggml_models/qwen2.5-7b-instruct-q3_k_m.gguf -co -cnv -p "You are Qwen, created by Alibaba Cloud. You are a helpful assistant." -fa -ngl 80 -n 512
-
 
 exit
 

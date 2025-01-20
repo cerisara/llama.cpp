@@ -125,7 +125,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     //     }
     //     printf("\n\n");
     // }
-    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9) || !strncmp(t->name, "ffn_up-", 7) || !strncmp(t->name, "ffn_gate_par-", 13) || !strncmp(t->name, "ffn_gate-", 9) || !strncmp(t->name, "ffn_silu-", 9))) {
+    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9) || !strncmp(t->name, "ffn_up-", 7) || !strncmp(t->name, "ffn_gate_par-", 13) || !strncmp(t->name, "ffn_gate-", 9) || !strncmp(t->name, "ffn_silu-", 9) || !strncmp(t->name, "l_out-", 6) || !strncmp(t->name, "ffn_inp-", 8) || !strncmp(t->name, "result_output", 13))) {
         if (ask) return true;
         int detlayer; 
         char tensor_path[256];
@@ -147,11 +147,23 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         }
         else if (!strncmp(t->name, "ffn_up-", 7)) {
             detlayer = atoi(t->name+7);
-            snprintf(tensor_path, sizeof(tensor_path), "inps.bin.%s", getenv("TENSORS_EXT"));
+            snprintf(tensor_path, sizeof(tensor_path), "ups.bin.%s", getenv("TENSORS_EXT"));
         }
         else if (!strncmp(t->name, "ffn_gate_par-", 13)) {
             detlayer = atoi(t->name+13);
             snprintf(tensor_path, sizeof(tensor_path), "pars.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "l_out-", 6)) {
+            detlayer = atoi(t->name+6);
+            snprintf(tensor_path, sizeof(tensor_path), "lout.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "ffn_inp-", 8)) {
+            detlayer = atoi(t->name+8);
+            snprintf(tensor_path, sizeof(tensor_path), "inps.bin.%s", getenv("TENSORS_EXT"));
+        }
+        else if (!strncmp(t->name, "result_output", 13)) {
+            detlayer = atoi(t->name+13);
+            snprintf(tensor_path, sizeof(tensor_path), "logs.bin.%s", getenv("TENSORS_EXT"));
         }
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
@@ -160,7 +172,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        if (detframe==0 && detlayer==0) {
+        if (detframe==0 && detlayer==0 or !strncmp(t->name, "result_output", 13)) {
 			f = fopen(tensor_path, "wb");
 			int vecdim = ne[0];
             fwrite(&vecdim, sizeof(int), 1, f);
@@ -769,7 +781,7 @@ int main(int argc, char ** argv) {
                 const std::string token_str = common_token_to_piece(ctx, id, params.special);
 
                 // Console/Stream Output
-                LOG("%s", token_str.c_str());
+                LOG("|%s", token_str.c_str());
 
                 // Record Displayed Tokens To Log
                 // Note: Generated tokens are created one by one hence this check
