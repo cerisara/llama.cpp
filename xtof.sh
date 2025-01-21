@@ -119,42 +119,38 @@ TENSORS_EXT="err" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80
 
 
 
-norm_path=norm.bin.err
-acts_path=acts.bin.err  
-inps_path=inps.bin.err
+err_ext=err
 
 # # Recursive insertion
 # n=23
 # for i in $(seq 0 $n)
 # do
-#     /bin/python3 hfedit.py $m $i $norm_path $acts_path $inps_path reccursive
+#     /bin/python3 hfedit.py $m $i $err_ext reccursive
 #     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
 #     m=./rec_$i.gguf
-#     norm_path=norm.bin.rec_$i
-#     acts_path=acts.bin.rec_$i
-#     inps_path=inps.bin.rec_$i
+#     err_ext=rec_$i
 #     # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 #     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 #     # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-#     ./compacts acts.bin.gld acts.bin.rec_$i
+#     ./compacts lout.bin.gld lout.bin.rec_$i
 # done
 
 
 # Insert single layer
 i=20
-/bin/python3 hfedit.py $m $i $norm_path $acts_path $inps_path single
+/bin/python3 hfedit.py $m $i $err_ext single
 /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
 m=./rec_$i.gguf
 TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 
-./compacts acts.bin.gld acts.bin.rec_$i
+./compacts lout.bin.gld lout.bin.rec_$i
 
 exit
 # Insert all layers
-# /bin/python3 hfedit.py $m -1 $norm_path $acts_path $inps_path all
+# /bin/python3 hfedit.py $m -1 $err_ext all
 # /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
 # m=./rec_all.gguf
 # TENSORS_EXT="rec_all" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-# ./compacts acts.bin.gld acts.bin.rec_all
+# ./compacts lout.bin.gld lout.bin.rec_all
 
 
 # Run the script that adds the activations and inputs to the gguf file using ggml
@@ -191,9 +187,9 @@ exit
 ./showacts pars.bin.err
 ./showacts pars.bin.rec_$n
 
-./compacts acts.bin.gld acts.bin.err
-./compacts acts.bin.gld acts.bin.rec_$n
-./compacts acts.bin.err acts.bin.rec_$n
+./compacts lout.bin.gld lout.bin.err
+./compacts lout.bin.gld lout.bin.rec_$n
+./compacts lout.bin.err lout.bin.rec_$n
 
 TENSORS_EXT="rec_$n" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 

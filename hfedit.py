@@ -20,13 +20,15 @@ def read_binaries(filename):
             matrix.append(vector)
     return torch.tensor(matrix)
 
-def modify_layers(model, layer_to_modify, insertion_type, norm_path, acts_path, inps_path):
-    err_norm = read_binaries(norm_path)
-    err_acts = read_binaries(acts_path)
-    err_inps = read_binaries(inps_path)
+def modify_layers(model, layer_to_modify, insertion_type, err_ext):
+    err_norm = read_binaries("norm.bin." + err_ext)
+    err_acts = read_binaries("acts.bin." + err_ext)
+    err_inps = read_binaries("inps.bin." + err_ext)
+    err_kqv = read_binaries("kqv.bin." + err_ext)
     gld_norm = read_binaries("norm.bin.gld")
     gld_acts = read_binaries("acts.bin.gld")
     gld_inps = read_binaries("inps.bin.gld")
+    gld_kqv = read_binaries("kqv.bin.gld")
 
     print("Vectors dims", err_norm.size(), err_acts.size(), err_inps.size(), gld_norm.size(), gld_acts.size(), gld_inps.size())
     
@@ -56,7 +58,10 @@ def modify_layers(model, layer_to_modify, insertion_type, norm_path, acts_path, 
                 ww = w
             if layer == layer_to_modify or insertion_type=="all":
                 print("Modifying layer ", layer)
-                gld_acts_cpy = torch.clone(gld_acts[layer]) - torch.clone(err_acts[layer]) + torch.clone(gld_inps[layer]) - torch.clone(err_inps[layer])
+                if layer_to_modify==(gld_acts.size(0)-1):
+                    gld_acts_cpy = torch.clone(gld_acts[layer]) - torch.clone(err_acts[layer]) + torch.clone(gld_inps[layer]) - torch.clone(err_inps[layer])
+                else:
+                    gld_acts_cpy = torch.clone(gld_acts[layer]) - torch.clone(err_acts[layer]) + torch.clone(gld_inps[layer]) - torch.clone(err_inps[layer]) + torch.clone(gld_kqv[layer+1]) - torch.clone(err_kqv[layer+1])
                 with torch.no_grad():
                     ww[:,-256] = gld_acts_cpy
             m.weight=torch.nn.Parameter(ww)
@@ -79,18 +84,19 @@ def saving_model(model, tokenizer, layer_to_modify, insertion_type):
 def main():
     model_path = sys.argv[1]
     layer_to_modify = int(sys.argv[2])
-    norm_path = sys.argv[3]
-    acts_path = sys.argv[4]
-    inps_path = sys.argv[5]
-    insertion_type = sys.argv[6]
+    err_ext = sys.argv[3]
+    insertion_type = sys.argv[4]
 
-    d = os.path.dirname(model_path)
-    m = os.path.basename(model_path)
+    if os.path.exists(model_path):
+        d = os.path.dirname(model_path)
+        m = os.path.basename(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
+        model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModelForCausalLM.from_pretrained(model_path)
 
-    tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
-    model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
-
-    modify_layers(model, layer_to_modify, insertion_type, norm_path, acts_path, inps_path)
+    modify_layers(model, layer_to_modify, insertion_type, err_ext)
 
     saving_model(model, tokenizer, layer_to_modify, insertion_type)
 
