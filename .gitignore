@@ -19,9 +19,6 @@
 *.o
 *.so
 *.tmp
-*.bin.gld
-*.bin.err
-*.bin.rec*
 
 # IDE / OS
 
@@ -151,3 +148,4 @@ poetry.toml
 compacts
 showacts
 choosemodel
+bin_tensors/

@@ -129,59 +129,61 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         if (ask) return true;
         int detlayer; 
         char tensor_path[256];
+        char tensor_name[256];
         if (!strncmp(t->name, "ffn_out-", 8)) {
             detlayer = atoi(t->name+8);  
-            snprintf(tensor_path, sizeof(tensor_path), "acts.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "out");
         }
         else if (!strncmp(t->name, "ffn_norm-", 9)) {
             detlayer = atoi(t->name+9);
-            snprintf(tensor_path, sizeof(tensor_path), "norm.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "norm");
         }
         else if (!strncmp(t->name, "ffn_gate-", 9)) {
             detlayer = atoi(t->name+9);
-            snprintf(tensor_path, sizeof(tensor_path), "gate.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "gate");
         }
         else if (!strncmp(t->name, "ffn_silu-", 9)) {
             detlayer = atoi(t->name+9);
-            snprintf(tensor_path, sizeof(tensor_path), "silu.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "silu");
         }
         else if (!strncmp(t->name, "ffn_up-", 7)) {
             detlayer = atoi(t->name+7);
-            snprintf(tensor_path, sizeof(tensor_path), "ups.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "up");
         }
         else if (!strncmp(t->name, "ffn_gate_par-", 13)) {
             detlayer = atoi(t->name+13);
-            snprintf(tensor_path, sizeof(tensor_path), "pars.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "gatepar");
         }
         else if (!strncmp(t->name, "l_out-", 6)) {
             detlayer = atoi(t->name+6);
-            snprintf(tensor_path, sizeof(tensor_path), "lout.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "lout");
         }
         else if (!strncmp(t->name, "ffn_inp-", 8)) {
             detlayer = atoi(t->name+8);
-            snprintf(tensor_path, sizeof(tensor_path), "inps.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "inp");
         }
         else if (!strncmp(t->name, "result_output", 13)) {
             detlayer = atoi(t->name+13);
-            snprintf(tensor_path, sizeof(tensor_path), "logs.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "logits");
         }
         else if (!strncmp(t->name, "kqv_out-", 8)) {
             detlayer = atoi(t->name+8);
             t = t->src[1]->src[0];
-            snprintf(tensor_path, sizeof(tensor_path), "attn.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "attn");
         }
         else if (!strncmp(t->name, "k-", 2)) {
             detlayer = atoi(t->name+2);
-            snprintf(tensor_path, sizeof(tensor_path), "k.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "k");
         }
         else if (!strncmp(t->name, "q-", 2)) {
             detlayer = atoi(t->name+2);
-            snprintf(tensor_path, sizeof(tensor_path), "q.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "q");
         }
         else if (!strncmp(t->name, "v-", 2)) {
             detlayer = atoi(t->name+2);
-            snprintf(tensor_path, sizeof(tensor_path), "v.bin.%s", getenv("TENSORS_EXT"));
+            strcpy(tensor_name, "v");
         }
+        snprintf(tensor_path, sizeof(tensor_path), "./bin_tensors/%s.%s", tensor_name, getenv("TENSORS_EXT"));
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
         // printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
@@ -189,6 +191,8 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
+        int n_tok = 2;
+        // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
         if (detframe==0 && (detlayer==0 or !strncmp(t->name, "result_output", 13))) {
 			f = fopen(tensor_path, "wb");
             int vecdim = ne[0];
@@ -199,11 +203,11 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
                 vecdim = ne[0]*ne[2];
             }
             fwrite(&vecdim, sizeof(int), 1, f);
+            fwrite(&n_tok, sizeof(int), 1, f);
 		} else f = fopen(tensor_path, "ab");
-        fwrite(&detlayer, sizeof(int), 1, f);
         if (!strncmp(t->name, "node_", 5)) {
+            for (int64_t i2 = ne[2] - n_tok; i2 < ne[2]; i2++) { // timesteps
             for (int64_t i3 = 0; i3 < ne[3]; i3++) {
-            for (int64_t i2 = ne[2] - 1; i2 < ne[2]; i2++) { // timesteps
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
             for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
                 size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
@@ -213,35 +217,49 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
             }}}}
         }
         else if (!strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
-            ggml_fp16_t fp16_data[ne[0]*ne[2]];
-            float fp32_data[ne[0]*ne[2]];
+            ggml_fp16_t fp16_data[ne[0]];
+            float fp32_data[ne[0]];
+            for (int64_t i1 = 26 - n_tok; i1 < 26; i1++) { // timesteps
             for (int64_t i3 = 0; i3 < ne[3]; i3++) {
             for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-            for (int64_t i1 = 25; i1 < 26; i1++) { // timesteps
-            for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
-                size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
-                fp16_data[i0] = *(ggml_fp16_t *) &data[i];
-            }
-            ggml_fp16_to_fp32_row(fp16_data, fp32_data, ne[0]);
-            for (int64_t i0 = 0; i0 < ne[0]; i0++) {
-                float v;
-                v = fp32_data[i0];
-                fwrite(&v,sizeof(float),1,f);
-            }}}}
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    fp16_data[i0] = *(ggml_fp16_t *) &data[i];
+                }
+                ggml_fp16_to_fp32_row(fp16_data, fp32_data, ne[0]);
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    float v;
+                    v = fp32_data[i0];
+                    fwrite(&v,sizeof(float),1,f);
+                }
+            }}}
         }
         else {
-            for (int64_t i3 = 0; i3 < ne[3]; i3++) {
-            for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-            for (int64_t i1 = ne[1]-1; i1 < ne[1]; i1++) { // timesteps
-            for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
-                size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
-                float v;
-                v = *(float *) &data[i];
-                fwrite(&v,sizeof(float),1,f);
-            }}}}
+            if (ne[1]==1) {
+                for (int64_t t = 0; t < n_tok; t++) {
+                for (int64_t i1 = 0; i1 < ne[1]; i1++) { // timesteps
+                for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+                for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    v = *(float *) &data[i];
+                    fwrite(&v,sizeof(float),1,f);
+                }}}}}
+            }
+            else {
+                for (int64_t i1 = ne[1] - n_tok; i1 < ne[1]; i1++) { // timesteps
+                for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+                for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    v = *(float *) &data[i];
+                    fwrite(&v,sizeof(float),1,f);
+                }}}}
+            }
         }
         fclose(f);
-        // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
     } else if (ask) return false;
     return true;
 }

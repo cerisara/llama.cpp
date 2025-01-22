@@ -104,7 +104,7 @@ err_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are 
 
 # generalisation_prompt="<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n$instruction $question <|im_end|>\n<|im_start|>assistant\n"
 # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-# m=./rec_23.gguf
+# m=./gguf_ggml_models/rec_23.gguf
 # TENSORS_EXT="rec_23" build/bin/llama-cli -m $m -co -sp -p "$generalisation_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 # exit
 
@@ -126,70 +126,44 @@ err_ext=err
 # for i in $(seq 0 $n)
 # do
 #     /bin/python3 hfedit.py $m $i $err_ext reccursive
-#     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
-#     m=./rec_$i.gguf
+#     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+#     m=./gguf_ggml_models/rec_$i.gguf
 #     err_ext=rec_$i
 #     # TENSORS_EXT="rec_$i" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 #     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 #     # TENSORS_EXT="gld" build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-#     ./compacts lout.bin.gld lout.bin.rec_$i
+#     ./compacts lout.gld lout.rec_$i
 # done
 
 
 # Insert single layer
 i=20
 /bin/python3 hfedit.py $m $i $err_ext single
-/bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
-m=./rec_$i.gguf
+/bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+m=./gguf_ggml_models/rec_$i.gguf
 TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 
-./compacts lout.bin.gld lout.bin.rec_$i
+./compacts lout.gld lout.rec_$i
 
 exit
 # Insert all layers
 # /bin/python3 hfedit.py $m -1 $err_ext all
-# /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
-# m=./rec_all.gguf
+# /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
+# m=./gguf_ggml_models/rec_all.gguf
 # TENSORS_EXT="rec_all" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-# ./compacts lout.bin.gld lout.bin.rec_all
+# ./compacts lout.gld lout.rec_all
 
 
 # Run the script that adds the activations and inputs to the gguf file using ggml
 # build/bin/llama-detgguf $m
 # for i in $(seq 10 12)
 # do
-#     m="./rec_$i.gguf"
+#     m="./gguf_ggml_models/rec_$i.gguf"
 #     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 # done
 
-
-
-./showacts acts.bin.gld
-./showacts acts.bin.err
-./showacts acts.bin.rec_$n
-
-./showacts norm.bin.gld
-./showacts norm.bin.err
-./showacts norm.bin.rec_$n
-
-./showacts inps.bin.gld
-./showacts inps.bin.err
-./showacts inps.bin.rec_$n
-
-./showacts gate.bin.gld
-./showacts gate.bin.err
-./showacts gate.bin.rec_$n
-
-./showacts silu.bin.gld
-./showacts silu.bin.err
-./showacts silu.bin.rec_$n
-
-./showacts pars.bin.gld
-./showacts pars.bin.err
-./showacts pars.bin.rec_$n
-
-./compacts lout.bin.gld lout.bin.err
-./compacts lout.bin.gld lout.bin.rec_$n
-./compacts lout.bin.err lout.bin.rec_$n
+./compacts lout.gld lout.err
+./compacts lout.gld lout.rec_$n
+./compacts lout.err lout.rec_$n
 
 TENSORS_EXT="rec_$n" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
 

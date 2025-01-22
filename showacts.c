@@ -1,30 +1,37 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 void main(int argc, char **argv) {
-    FILE *f = fopen(argv[1], "rb");
+    char* filename;
+    filename = malloc(strlen(argv[1])+15);
+    strcpy(filename, "./bin_tensors/");
+    strcat(filename, argv[1]);
+    FILE *f = fopen(filename, "rb");
 	int vecdim=-1;
+    int n_tok=-1;
 	fread(&vecdim, sizeof(int), 1, f);
+	fread(&n_tok, sizeof(int), 1, f);
     printf("vecdim %d\n",vecdim);
-    float v[100*5000]; // max 100 layers 5000 vecdim
-    int n=fread(v,sizeof(float),100*5000,f);
+    printf("ntok %d\n", n_tok);
+    float v[100*10000]; // max 100 layers 10000 vecdim*n_tok
+    int n=fread(v,sizeof(float),100*10000,f);
     fclose(f);
 
     printf("showing %s\n", argv[1]);
     printf("nread %d\n",n);
-    for (int i=0;i<100;i++) printf("%f ",v[0*(vecdim+1)+i]);
+    for (int i=0;i<100;i++) printf("%f ",v[10*n_tok*vecdim+i+vecdim]);
     printf("\n");
 
-    int nlayers = n/vecdim;
+    int nlayers = n/(vecdim*n_tok);
     for (int l=0;l<nlayers;l++) {
-    // for (int l=0;l<1;l++) {
-        float d=0.;
-        for (int i=0;i<vecdim;i++) {
-            float dd=v[l*(vecdim+1)+i];
-            d+=dd*dd;
+        for (int t=0;t<n_tok;t++) {
+            float d=.0;
+            for (int i=0;i<vecdim;i++) {
+                float dd=v[l*n_tok*vecdim+vecdim*t+i];
+                d+=dd*dd;
+            }
+            printf("%d %d %f\n",l, t, d);
         }
-        printf("%d %f\n",l,d);
     }
-    // for (int i=-260; i<=10; i++){
-    //     printf("updated activation %d %f\n", i, v[1*(vecdim+1)+vecdim+i]);
-    // }
 }

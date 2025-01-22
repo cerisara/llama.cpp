@@ -22,29 +22,37 @@ err_ext=err
 # for i in $(seq 0 $n)
 # do
 #     /bin/python3 hfedit.py $m $i $err_ext reccursive
-#     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
-#     m=./rec_$i.gguf
+#     /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+#     m=./gguf_ggml_models/rec_$i.gguf
 #     err_ext=rec_$i
 #     TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-#     ./compacts lout.bin.gld lout.bin.rec_$i
+#     ./compacts lout.gld lout.rec_$i
 # done
 
 # Insert single layer
 i=10
 /bin/python3 hfedit.py $m $i $err_ext single
-/bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
-m=./rec_$i.gguf
+/bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+m=./gguf_ggml_models/rec_$i.gguf
 TENSORS_EXT="rec_$i" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-./compacts k.bin.gld k.bin.rec_$i
-./compacts q.bin.gld q.bin.rec_$i
-./compacts v.bin.gld v.bin.rec_$i
-./compacts attn.bin.gld attn.bin.rec_$i
-./compacts inps.bin.gld inps.bin.rec_$i
-./compacts lout.bin.gld lout.bin.rec_$i
-
+./compacts k.gld k.rec_$i
+./compacts q.gld q.rec_$i
+./compacts v.gld v.rec_$i
+./compacts attn.gld attn.rec_$i
+./compacts inp.gld inp.rec_$i
+./compacts norm.gld norm.rec_$i
+./compacts gate.gld gate.rec_$i
+./compacts silu.gld silu.rec_$i
+./compacts gatepar.gld gatepar.rec_$i
+./compacts out.gld out.rec_$i
+./compacts lout.gld lout.rec_$i
+./compacts out.gld out.err
+./showacts out.gld
+./showacts out.rec_$i
+./showacts out.err
 # Insert all layers
 # /bin/python3 hfedit.py $m -1 $err_ext all
-# /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
-# m=./rec_all.gguf
+# /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
+# m=./gguf_ggml_models/rec_all.gguf
 # TENSORS_EXT="rec_all" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 512 --no-warmup --temp 0
-# ./compacts lout.bin.gld lout.bin.rec_all
+# ./compacts lout.gld lout.rec_all
