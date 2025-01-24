@@ -191,7 +191,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        int n_tok = 2;
+        int n_tok = 12;
         // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
         if (detframe==0 && (detlayer==0 or !strncmp(t->name, "result_output", 13))) {
 			f = fopen(tensor_path, "wb");
@@ -243,7 +243,12 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
-                    v = *(float *) &data[i];
+                    if (t == 0){
+                        v = *(float *) &data[i];
+                    }
+                    else {
+                        v = 0.;
+                    }
                     fwrite(&v,sizeof(float),1,f);
                 }}}}}
             }

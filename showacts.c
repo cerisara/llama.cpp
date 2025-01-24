@@ -20,7 +20,7 @@ void main(int argc, char **argv) {
 
     printf("showing %s\n", argv[1]);
     printf("nread %d\n",n);
-    for (int i=0;i<100;i++) printf("%f ",v[10*n_tok*vecdim+i+vecdim]);
+    for (int i=0;i<100;i++) printf("%f ",v[10*n_tok*vecdim+i+vecdim+vecdim-260]);
     printf("\n");
 
     int nlayers = n/(vecdim*n_tok);
