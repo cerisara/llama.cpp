@@ -7,6 +7,7 @@ import os
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
+
 def read_binaries(filename):
     tensor = []
     with open(filename, "rb") as f:
@@ -31,33 +32,57 @@ def read_binaries(filename):
             tensor.append(matrix)
     return torch.tensor(tensor)
 
+
+def get_collinearities(mat):
+    distances = torch.cdist(mat, mat, p=2)
+    is_close = torch.where(distances < 0.1, 1., 0.)
+    collinearities = torch.flip(torch.unique(is_close, dim=0), dims=(0,))
+    return torch.div(collinearities.T, torch.sum(collinearities, dim=1)).T
+
+
 def modify_layers(model, layer_to_modify, insertion_type, err_ext):
     print("Reading binaries")
     err_norm = read_binaries("./bin_tensors/norm." + err_ext)
     err_out = read_binaries("./bin_tensors/out." + err_ext)
     err_inp = read_binaries("./bin_tensors/inp." + err_ext)
-    # err_kqv = read_binaries("./bin_tensors/kqv." + err_ext)
     gld_norm = read_binaries("./bin_tensors/norm.gld")
     gld_out = read_binaries("./bin_tensors/out.gld")
     gld_inp = read_binaries("./bin_tensors/inp.gld")
-    # gld_kqv = read_binaries("./bin_tensors/kqv.gld")
     n_layers, n_tok, vecdim = err_norm.size()
 
     if insertion_type == "all":
-        w_up = torch.div(err_norm, (torch.norm(err_norm, dim=2).unsqueeze(-1)**2)) * 1.1477576321447434930 # Number is solution of x*x*sigmoid(x) = 1 
+        x = err_norm
+        w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
         w_down = gld_out - err_out + gld_inp - err_inp
-        z_edit = torch.matmul(err_norm, w_up.permute(0, 2, 1))
-        gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(z_edit)
-        weighted_w_down = torch.linalg.solve(gated_z_edit, w_down).permute(0, 2, 1)
+        z_edit = torch.matmul(x, w_up.permute(0, 2, 1))
+
+        collinearities = [get_collinearities(z_edit_layer) for z_edit_layer in z_edit]
+        x = [collinearities_layer@x_layer for collinearities_layer, x_layer in zip(collinearities, x)]
+        w_up = [collinearities_layer@w_up_layer for collinearities_layer, w_up_layer in zip(collinearities, w_up)]
+        w_down = [collinearities_layer@w_down_layer for collinearities_layer, w_down_layer in zip(collinearities, w_down)]
+        z_edit = [collinearities_layer@z_edit_layer@collinearities_layer.T for collinearities_layer, z_edit_layer in zip(collinearities, z_edit)]
+        gated_z_edit = [z_edit_layer*z_edit_layer*torch.nn.functional.sigmoid(z_edit_layer) for z_edit_layer in z_edit]
+        
+        weighted_w_down = [torch.linalg.solve(gated_z_edit_layer, w_down_layer).T for gated_z_edit_layer, w_down_layer in zip(gated_z_edit, w_down)] + [w_down[-1].T]
     else:
-        w_up = torch.div(err_norm[layer_to_modify], (torch.norm(err_norm[layer_to_modify], dim=1).unsqueeze(-1)**2)) * 1.1477576321447434930 # Number is solution of x*x*sigmoid(x) = 1 
+        x = err_norm[layer_to_modify]
+        w_up = torch.div(x, (torch.norm(x, dim=1).unsqueeze(-1)**2))    
         w_down = gld_out[layer_to_modify] - err_out[layer_to_modify] + gld_inp[layer_to_modify] - err_inp[layer_to_modify]
-        z_edit = torch.matmul(err_norm[layer_to_modify], w_up.permute(1, 0))
-        gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(z_edit)
-        weighted_w_down = torch.linalg.solve(gated_z_edit, w_down).permute(1, 0)
-        # weighted_w_down = torch.linalg.lstsq(gated_z_edit, w_down).solution.permute(1, 0)
-        # lu, pivots = torch.linalg.lu_factor(gated_z_edit)
-        # weighted_w_down = torch.linalg.lu_solve(lu, pivots, w_down).permute(1, 0)
+        if layer_to_modify == n_layers-1:
+            weighted_w_down = w_down
+        else:
+            z_edit = torch.matmul(x, w_up.T)
+
+            collinearities = get_collinearities(z_edit)
+            x = collinearities@x
+            w_up = [collinearities@w_up]
+            w_down = collinearities@w_down
+            z_edit = collinearities@z_edit@collinearities.T
+            gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(z_edit)
+            
+            weighted_w_down = [torch.linalg.solve(gated_z_edit, w_down).T]
+            
+            print("Condition number", torch.linalg.cond(gated_z_edit))
 
     print("Vectors dims", err_norm.size(), err_out.size(), err_inp.size(), gld_norm.size(), gld_out.size(), gld_inp.size())
 
@@ -75,13 +100,13 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                 if insertion_type == "all":
                     w_up_layer = w_up[layer]
                 else:
-                    w_up_layer = w_up
+                    w_up_layer = w_up[0]
                 if layer == n_layers-1:
                     with torch.no_grad():
                         ww[-256] = w_up_layer[0]
                 else:
                     with torch.no_grad():
-                        ww[-256:-256+n_tok] = w_up_layer
+                        ww[-256:-256+w_up_layer.size(0)] = w_up_layer
             m.weight=torch.nn.Parameter(ww)
             print(n, m.weight.size())
         elif n.endswith(".mlp.down_proj"):
@@ -97,15 +122,16 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                 if insertion_type == "all":
                     weighted_w_down_layer = weighted_w_down[layer]
                 else:
-                    weighted_w_down_layer = weighted_w_down
+                    weighted_w_down_layer = weighted_w_down[0]
                 if layer == n_layers-1:
                     with torch.no_grad():
                         ww[:,-256] = weighted_w_down_layer[0]
                 else:
                     with torch.no_grad():
-                        ww[:,-256:-256+n_tok] = weighted_w_down_layer
+                        ww[:,-256:-256+weighted_w_down_layer.size(1)] = weighted_w_down_layer
             m.weight=torch.nn.Parameter(ww)
             print(n, m.weight.size()) 
+
 
 def saving_model(model, tokenizer, layer_to_modify, insertion_type):
     print("Saving to torch_model")

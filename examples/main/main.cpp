@@ -191,7 +191,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        int n_tok = 12;
+        int n_tok = atoi(getenv("N_TOK"));
         // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
         if (detframe==0 && (detlayer==0 or !strncmp(t->name, "result_output", 13))) {
 			f = fopen(tensor_path, "wb");
@@ -216,24 +216,24 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
                 fwrite(&v,sizeof(float),1,f);
             }}}}
         }
-        else if (!strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
-            ggml_fp16_t fp16_data[ne[0]];
-            float fp32_data[ne[0]];
-            for (int64_t i1 = 26 - n_tok; i1 < 26; i1++) { // timesteps
-            for (int64_t i3 = 0; i3 < ne[3]; i3++) {
-            for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-                for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
-                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
-                    fp16_data[i0] = *(ggml_fp16_t *) &data[i];
-                }
-                ggml_fp16_to_fp32_row(fp16_data, fp32_data, ne[0]);
-                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
-                    float v;
-                    v = fp32_data[i0];
-                    fwrite(&v,sizeof(float),1,f);
-                }
-            }}}
-        }
+        // else if (!strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
+        //     ggml_fp16_t fp16_data[ne[0]];
+        //     float fp32_data[ne[0]];
+        //     for (int64_t i1 = 26 - n_tok; i1 < 26; i1++) { // timesteps
+        //     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        //     for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+        //         for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
+        //             size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+        //             fp16_data[i0] = *(ggml_fp16_t *) &data[i];
+        //         }
+        //         ggml_fp16_to_fp32_row(fp16_data, fp32_data, ne[0]);
+        //         for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+        //             float v;
+        //             v = fp32_data[i0];
+        //             fwrite(&v,sizeof(float),1,f);
+        //         }
+        //     }}}
+        // }
         else {
             if (ne[1]==1) {
                 for (int64_t t = 0; t < n_tok; t++) {
@@ -261,7 +261,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
                     float v;
                     v = *(float *) &data[i];
                     fwrite(&v,sizeof(float),1,f);
-                }}}}
+            }}}}
             }
         }
         fclose(f);
