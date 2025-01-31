@@ -1,4 +1,3 @@
-
 import struct
 import json
 import sys
@@ -35,6 +34,8 @@ def read_binaries(filename):
 
 def get_collinearities(mat):
     distances = torch.cdist(mat, mat, p=2)
+    print("mat", mat)
+    print("distances", distances)
     is_close = torch.where(distances < 0.1, 1., 0.)
     collinearities = torch.flip(torch.unique(is_close, dim=0), dims=(0,))
     return torch.div(collinearities.T, torch.sum(collinearities, dim=1)).T
@@ -48,9 +49,21 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
     gld_norm = read_binaries("./bin_tensors/norm.gld")
     gld_out = read_binaries("./bin_tensors/out.gld")
     gld_inp = read_binaries("./bin_tensors/inp.gld")
-    n_layers, n_tok, vecdim = err_norm.size()
+
+    n_tok = min(err_norm.size(1), gld_norm.size(1))
+    n_layers = err_norm.size(0)
+
+    err_norm = err_norm[:,:n_tok]
+    err_out = err_out[:,:n_tok]
+    err_inp = err_inp[:,:n_tok]
+    gld_norm = gld_norm[:,:n_tok]
+    gld_out = gld_out[:,:n_tok]
+    gld_inp = gld_inp[:,:n_tok]
+
+    print("Vectors dims", err_norm.size(), err_out.size(), err_inp.size(), gld_norm.size(), gld_out.size(), gld_inp.size())
 
     if insertion_type == "all":
+        # not tested yet
         x = err_norm
         w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
         w_down = gld_out - err_out + gld_inp - err_inp
@@ -66,12 +79,16 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
         weighted_w_down = [torch.linalg.solve(gated_z_edit_layer, w_down_layer).T for gated_z_edit_layer, w_down_layer in zip(gated_z_edit, w_down)] + [w_down[-1].T]
     else:
         x = err_norm[layer_to_modify]
-        w_up = torch.div(x, (torch.norm(x, dim=1).unsqueeze(-1)**2))    
+        w_up = torch.div(x, (torch.norm(x, dim=1).unsqueeze(-1)**2))
         w_down = gld_out[layer_to_modify] - err_out[layer_to_modify] + gld_inp[layer_to_modify] - err_inp[layer_to_modify]
         if layer_to_modify == n_layers-1:
-            weighted_w_down = w_down
+            weighted_w_down = [w_down]
+            w_up = [w_up * 1.14776]
         else:
             z_edit = torch.matmul(x, w_up.T)
+            # print(z_edit)
+            # print(torch.matmul(x, x.T))
+            # print(torch.norm(x, dim=1))
 
             collinearities = get_collinearities(z_edit)
             x = collinearities@x
@@ -79,13 +96,14 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
             w_down = collinearities@w_down
             z_edit = collinearities@z_edit@collinearities.T
             gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(z_edit)
+            print("Collinearities", collinearities)
+            print("Gated z edit", gated_z_edit)
             
             weighted_w_down = [torch.linalg.solve(gated_z_edit, w_down).T]
             
             print("Condition number", torch.linalg.cond(gated_z_edit))
 
-    print("Vectors dims", err_norm.size(), err_out.size(), err_inp.size(), gld_norm.size(), gld_out.size(), gld_inp.size())
-
+    # print("wd size", weighted_w_down.size(), weighted_w_down)
     for n,m in model.named_modules():
         if n.endswith(".mlp.gate_proj") or n.endswith(".mlp.up_proj"):
             layer = int(n.split(".")[2])

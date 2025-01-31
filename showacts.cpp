@@ -2,11 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-void main(int argc, char **argv) {
-    char* filename;
-    filename = malloc(strlen(argv[1])+15);
-    strcpy(filename, "./bin_tensors/");
-    strcat(filename, argv[1]);
+int main(int argc, char **argv) {
+    char filename[256];
+    snprintf(filename, sizeof(filename), "./bin_tensors/%s", argv[1]);
     FILE *f = fopen(filename, "rb");
 	int vecdim=-1;
     int n_tok=-1;
@@ -14,8 +12,8 @@ void main(int argc, char **argv) {
 	fread(&n_tok, sizeof(int), 1, f);
     printf("vecdim %d\n",vecdim);
     printf("ntok %d\n", n_tok);
-    float v[100*10000]; // max 100 layers 10000 vecdim*n_tok
-    int n=fread(v,sizeof(float),100*10000,f);
+    float* v = new float[100*10000*100]; // max 100 layers 10000 vecdim 100 tokens
+    int n=fread(v,sizeof(float),100*10000*100,f);
     fclose(f);
 
     printf("showing %s\n", argv[1]);
@@ -39,4 +37,7 @@ void main(int argc, char **argv) {
             printf("%d %d %f\n",l, t, d);
         }
     }
+    
+    delete[] v;
+    return 0;
 }

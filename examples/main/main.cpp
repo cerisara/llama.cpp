@@ -95,11 +95,6 @@ static int detframe=0, detprevlayer=-1;
 static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     // peut etre appele plusieurs fois pour le meme noeud, afin de savoir quels noeuds ont besoin d'info
     // c'est la var "ask" qui permet de savoir cela: lorsqu'elle est false, alors on a les vrai infos
-    float *v = (float *)t->data;
-
-
-
-
 
     //  Weight debugging
     // if (!strncmp(t->name, "ffn_up-", 7)) {
@@ -125,7 +120,8 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
     //     }
     //     printf("\n\n");
     // }
-    if ((detframe == 0) && (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9) || !strncmp(t->name, "ffn_up-", 7) || !strncmp(t->name, "ffn_gate_par-", 13) || !strncmp(t->name, "ffn_gate-", 9) || !strncmp(t->name, "ffn_silu-", 9) || !strncmp(t->name, "l_out-", 6) || !strncmp(t->name, "ffn_inp-", 8) || !strncmp(t->name, "result_output", 13) || !strncmp(t->name, "kqv_out-", 8) || !strncmp(t->name, "k-", 2) || !strncmp(t->name, "q-", 2) || !strncmp(t->name, "v-", 2))) {
+
+    if (!strncmp(t->name, "ffn_out-", 8) || !strncmp(t->name, "ffn_norm-", 9) || !strncmp(t->name, "ffn_up-", 7) || !strncmp(t->name, "ffn_gate_par-", 13) || !strncmp(t->name, "ffn_gate-", 9) || !strncmp(t->name, "ffn_silu-", 9) || !strncmp(t->name, "l_out-", 6) || !strncmp(t->name, "ffn_inp-", 8) || !strncmp(t->name, "kqv_out-", 8) || !strncmp(t->name, "k-", 2) || !strncmp(t->name, "q-", 2) || !strncmp(t->name, "v-", 2)) {
         if (ask) return true;
         int detlayer; 
         char tensor_path[256];
@@ -162,10 +158,10 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
             detlayer = atoi(t->name+8);
             strcpy(tensor_name, "inp");
         }
-        else if (!strncmp(t->name, "result_output", 13)) {
-            detlayer = atoi(t->name+13);
-            strcpy(tensor_name, "logits");
-        }
+        // else if (!strncmp(t->name, "result_output", 13)) {
+        //     detlayer = atoi(t->name+13);
+        //     strcpy(tensor_name, "logits");
+        // }
         else if (!strncmp(t->name, "kqv_out-", 8)) {
             detlayer = atoi(t->name+8);
             t = t->src[1]->src[0];
@@ -183,7 +179,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
             detlayer = atoi(t->name+2);
             strcpy(tensor_name, "v");
         }
-        snprintf(tensor_path, sizeof(tensor_path), "./bin_tensors/%s.%s", tensor_name, getenv("TENSORS_EXT"));
+        snprintf(tensor_path, sizeof(tensor_path), "./bin_tensors/%s.%s.l%d", tensor_name, getenv("TENSORS_EXT"), detlayer);
         if (detlayer<detprevlayer) detframe++;
         detprevlayer = detlayer;
         // printf("detsonlayer %s %d %d\n",t->name, detframe, detlayer);
@@ -191,20 +187,37 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        int n_tok = atoi(getenv("N_TOK"));
+        int n_tok;
+        if (detframe==0) {
+            n_tok = atoi(getenv("N_TOK"));
+        }
+        else {
+            n_tok = 1;
+        }
         // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
-        if (detframe==0 && (detlayer==0 or !strncmp(t->name, "result_output", 13))) {
+        int vecdim = ne[0];
+        if (!strncmp(t->name, "node_", 5)) {
+            vecdim = ne[0]*ne[1];
+        }
+        else if (!strncmp(t->name, "q-", 2) || !strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
+            vecdim = ne[0]*ne[2];
+        }
+        if (detframe==0) {
 			f = fopen(tensor_path, "wb");
-            int vecdim = ne[0];
-            if (!strncmp(t->name, "node_", 5)) {
-                vecdim = ne[0]*ne[1];
-            }
-            else if (!strncmp(t->name, "q-", 2) || !strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
-                vecdim = ne[0]*ne[2];
-            }
             fwrite(&vecdim, sizeof(int), 1, f);
             fwrite(&n_tok, sizeof(int), 1, f);
-		} else f = fopen(tensor_path, "ab");
+        }
+        else {
+			f = fopen(tensor_path, "rb+");
+            fseek(f, sizeof(int), SEEK_SET);
+            int previous_n_tok;
+            fread(&previous_n_tok, sizeof(int), 1, f);
+            int cur_n_tok = previous_n_tok + n_tok;
+            fseek(f, sizeof(int), SEEK_SET);
+            fwrite(&cur_n_tok, sizeof(int), 1, f);
+            fclose(f);
+            f = fopen(tensor_path, "ab");
+        }
         if (!strncmp(t->name, "node_", 5)) {
             for (int64_t i2 = ne[2] - n_tok; i2 < ne[2]; i2++) { // timesteps
             for (int64_t i3 = 0; i3 < ne[3]; i3++) {
@@ -267,6 +280,46 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         fclose(f);
     } else if (ask) return false;
     return true;
+}
+
+static void merge_binaries() {
+    const char *tensor_names[] = {"out", "norm", "gate", "silu", "gatepar", "lout", "up", "inp", "k", "q", "v", "attn"};
+
+    for (int i=0; i<12; i++) {
+        char tensor_path_target[256];
+        char tensor_path_src[256];
+
+        snprintf(tensor_path_target, sizeof(tensor_path_target), "./bin_tensors/%s.%s", tensor_names[i], getenv("TENSORS_EXT"));
+        FILE *f_target = fopen(tensor_path_target, "wb");
+
+        int vecdim;
+        int n_tok;
+
+        for (int j=0; j<24; j++) {
+            snprintf(tensor_path_src, sizeof(tensor_path_src), "./bin_tensors/%s.%s.l%d", tensor_names[i], getenv("TENSORS_EXT"), j);
+            FILE *f_src = fopen(tensor_path_src, "rb");
+
+            fread(&vecdim, sizeof(int), 1, f_src);
+            fread(&n_tok, sizeof(int), 1, f_src);
+            float* v = new float[vecdim*n_tok]; 
+
+            if (j == 0) {
+                fwrite(&vecdim, sizeof(int), 1, f_target);
+                fwrite(&n_tok, sizeof(int), 1, f_target);
+            }
+
+            fread(v, sizeof(float), vecdim*n_tok, f_src);
+            fwrite(v, sizeof(float), vecdim*n_tok, f_target);
+
+            fclose(f_src);
+            remove(tensor_path_src);
+            delete[] v;
+        }
+        fseek(f_target, 0, SEEK_SET);
+        fwrite(&vecdim, sizeof(int), 1, f_target);
+        fwrite(&n_tok, sizeof(int), 1, f_target);
+        fclose(f_target);
+    }
 }
 
 int main(int argc, char ** argv) {
@@ -1063,6 +1116,8 @@ int main(int argc, char ** argv) {
         LOG("\n%s: saving final output to session file '%s'\n", __func__, path_session.c_str());
         llama_state_save_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
     }
+
+    merge_binaries();
 
     LOG("\n\n");
     common_perf_print(ctx, smpl);
