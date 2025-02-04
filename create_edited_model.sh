@@ -22,8 +22,8 @@ then
     n=23
     for i in $(seq 0 $n)
     do
-        /bin/python3 hfedit.py $m $i $err_ext reccursive
-        /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+        python3 hfedit.py $m $i $err_ext reccursive
+        python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
         m=./gguf_ggml_models/rec_$i.gguf
         err_ext=rec_$i
         TENSORS_EXT="rec_$i" N_TOK=$n_tok build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 128 --no-warmup --temp 0
@@ -33,8 +33,8 @@ then
     done
 elif [ "$insertion_type" = "single" ]
 then
-    /bin/python3 hfedit.py $m $i $err_ext single
-    /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
+    python3 hfedit.py $m $i $err_ext single
+    python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_$i.gguf --outtype "q8_0" # not right quantization, needs to be updated
     m=./gguf_ggml_models/rec_$i.gguf
     TENSORS_EXT="rec_$i" N_TOK=$n_tok build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 128 --no-warmup --temp 0
     # ./compacts k.gld k.rec_$i
@@ -53,8 +53,8 @@ then
     # ./showacts gatepar.rec_$i
 elif [ "$insertion_type" = "all" ]
 then
-    /bin/python3 hfedit.py $m -1 $err_ext all
-    /bin/python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
+    python3 hfedit.py $m -1 $err_ext all
+    python3 convert_hf_to_gguf.py ./torch_model --outfile ./gguf_ggml_models/rec_all.gguf --outtype "q8_0" # not right quantization, needs to be updated
     m=./gguf_ggml_models/rec_all.gguf
     TENSORS_EXT="rec_all" N_TOK="$n_tok" build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 128 --no-warmup --temp 0
     ./compacts lout.gld lout.rec_all

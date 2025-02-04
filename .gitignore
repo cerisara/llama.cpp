@@ -149,3 +149,7 @@ compacts
 showacts
 choosemodel
 bin_tensors/
+
+# Paper
+paper.aux
+paper.out

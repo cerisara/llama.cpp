@@ -1,0 +1,185 @@
+\documentclass{article}
+\usepackage{hyperref}
+\usepackage{fixltx2e}
+\usepackage{amsmath}
+\usepackage[left=2cm, right=2cm]{geometry}
+
+\begin{document}
+
+
+    \section{Variable defintion}
+        \begin{equation}
+            X, X', Y, W_{N} \in \mathbb{R}^{b \times t \times d\textsubscript{model}}
+        \end{equation}
+        \begin{equation}
+            Z, Z' \in \mathbb{R}^{b \times t \times d\textsubscript{ff}}
+        \end{equation}
+        \begin{equation}
+            W_{U}, W_{G} \in \mathbb{R}^{b \times d\textsubscript{model} \times d\textsubscript{ff}}
+        \end{equation}
+        \begin{equation}
+            W_{D} \in \mathbb{R}^{b \times d\textsubscript{ff} \times d\textsubscript{model}}
+        \end{equation}
+
+
+
+
+    \section{Forward Path}
+        \begin{equation}
+            X' = norm(X) \times W_{N}
+        \end{equation}
+        \begin{equation}
+            Z = X' W_{U}
+        \end{equation}
+        \begin{equation}
+            Z' = Silu(X' W_{G}) \times Z
+        \end{equation}
+        \begin{equation}
+            Y = Z' W_{D} + X
+        \end{equation}
+
+
+
+
+    \section{Problem setting}
+        Given a question $(s, r)$ that can't be answered by model $f$'s knowledge but can be answered by being given fact $(s, r, o)$ throught In-Context Learning.
+        We want to build a new model $\hat{f}$ that doesn't need In-Context Learning to answer the question.
+        This is what we call an Edit Success.
+        \begin{equation}
+            \hat{f}((s, r)) \approx f(Concat((s, r, o), (s, r))) = o
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"Who won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+        \end{equation}
+        If we then give a question $(s', r)$ or $(s, r')$ with $s$ paraphrasing $s'$ and $r$ paraphrasing $r'$, the new model should generalize by answering without In-Context Learning.
+        This is what we call respectively subject generalization and relation generalization.
+        \begin{equation}
+            \hat{f}((s', r)) \approx f(Concat((s, r, o), (s, r))) = o
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"Who won 2026 most famous European football league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+        \end{equation}
+        \begin{equation}
+            \hat{f}((s, r')) \approx f(Concat((s, r, o), (s, r))) = o
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"Who got the trophy of the 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+        \end{equation}
+        If we now give a question $(s'', r)$ or $(s, r'')$ with $s \neq s''$  and $r \neq r''$ that shouldn't be modified by knowing fact $(s, r, o)$, our new model should behave the same as the base model.
+        This is what we call respectively subject specificity and relation specificity.
+        \begin{equation}
+            \hat{f}((s'', r)) \approx f((s'', r)) = o''
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"Who won 2024 UEFA Champions league ?"}) \approx f(\text{"Who won 2024 UEFA Champions league ?"}) = "Real Madrid"
+        \end{equation}
+        Or
+        \begin{equation}
+            \hat{f}((s, r'')) \approx f((s, r'')) = o''
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"When does the 2026 UEFA Champions league starts ?"}) \approx f(\text{"When does the 2026 UEFA Champions league starts?"}) = "September 16th 2025"
+        \end{equation}
+        Given a fact $(s, r''', o''')$ already known by the base model without In-Context Learning, the model should be able to answer a multihop question such as $((s, r), r''')$.
+        This is what we call multihop reasoning.
+        \begin{equation}
+            \hat{f}(((s, r), r''')) \approx f(Concat((s, r, o), ((s, r), r'''))) = o'''
+        \end{equation}
+        \begin{equation}
+            \hat{f}(\text{"From which country is the team that won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. From which country is the team that won 2026 UEFA Champions league ?"}) = "England"
+        \end{equation}
+
+
+    \section{Update weight}
+        \begin{equation}
+            W_{U}^{new} = Concat(W_{U}, W_{U}^{update})
+        \end{equation}
+        \begin{equation}
+            W_{G}^{new} = Concat(W_{G}, W_{G}^{update})
+        \end{equation}
+        \begin{equation}
+            W_{D}^{new} = Concat(W_{D}, W_{D}^{update})
+        \end{equation}
+
+
+        \begin{equation}
+            Z^{update}, Z'^{update} \in \mathbb{R}^{(b \times t) \times (n\textsubscript{edit} \times n\textsubscript{tok})}
+        \end{equation}
+        \begin{equation}
+            W_{U}^{update}, W_{G}^{update} \in \mathbb{R}^{b \times d\textsubscript{model} \times (n\textsubscript{edit} \times n\textsubscript{tok})}
+        \end{equation}
+        \begin{equation}
+            W_{D}^{update} \in \mathbb{R}^{b \times (n\textsubscript{edit} \times n\textsubscript{tok}) \times d\textsubscript{model}}
+        \end{equation}
+
+
+
+
+    \section{New variables defintion}
+        \begin{equation}
+            Z^{new}, Z'^{new} \in \mathbb{R}^{b \times t \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
+        \end{equation}
+        \begin{equation}
+            W_{U}^{new}, W_{G}^{new} \in \mathbb{R}^{b \times d\textsubscript{model} \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
+        \end{equation}
+        \begin{equation}
+            W_{D}^{new} \in \mathbb{R}^{b \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok})) \times d\textsubscript{model}}
+        \end{equation}
+
+
+
+
+    \section{Updated forward path}
+        \begin{equation}
+            W_{U}^{update} = W_{G}^{update} = \frac{X'^{err}}{{{||X'^{err}||}_2}^2}
+        \end{equation}
+        \begin{equation}
+            Z^{update} = X'^{err} W_{U}^{update}
+        \end{equation}
+        \begin{equation}
+            Z'^{update} = Silu(X'{err} W_{G}^{update}) \times Z^{update}
+        \end{equation}
+        \begin{equation}
+            Z'^{update} = Silu(X'{err} W_{U}^{update}) \times Z^{update}
+        \end{equation}
+        \begin{equation}
+            Z'^{update} = Silu(Z^{update}) \times Z^{update}
+        \end{equation}
+        \begin{equation}
+            Z'^{update} = {Z^{update}}^2 \times Sigmoid(Z^{update})
+        \end{equation}
+        \begin{equation}
+            W_{D}^{update} = Z'^{update}^{-1}(Y^{gld} - Y^{err})
+        \end{equation}
+
+
+
+
+    \section{Details of $W_{D}^{update}$ computation}
+        \begin{equation}
+            Y^{new} = Z'^{new} W_{D}^{new} + X{err}
+        \end{equation}
+        \begin{equation}
+            Y^{new} = Concat(Z', Z'^{update}) Concat(W_{D}, W_{D}^{update}) + X{err}
+        \end{equation}
+        \begin{equation}
+            Y^{new} = Z' W_{D} + Z'^{update} W_{D}^{update} + X{err}
+        \end{equation}
+        \begin{equation}
+            Y^{new} = Y^{err} + Z'^{update} W_{D}^{update}
+        \end{equation}
+        \begin{equation}
+            Y^{gld} = Y^{err} + Z'^{update} W_{D}^{update}
+        \end{equation}
+        \begin{equation}
+            Y^{gld} - Y^{err} = Z'^{update} W_{D}^{update}
+        \end{equation}
+        \begin{equation}
+            W_{D}^{update} = Z'^{update}^{-1}(Y^{gld} - Y^{err})
+        \end{equation}
+
+
+        Aknowledgement grid 5000 https://www.grid5000.fr/w/Grid5000:UsagePolicy
+
+
+\end{document}
