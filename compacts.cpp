@@ -28,13 +28,14 @@ int main(int argc, char **argv) {
     int n1=fread(v1,sizeof(float),100*10000*100,f);
     fclose(f);
     int n_tok = std::min(n_tok0, n_tok1);
+    int n = std::min(n0, n1);
 
     printf("comparison between %s and %s\n", argv[1], argv[2]);
     printf("nread %d %d\n",n0,n1);
     printf("vecdim %d\n", vecdim);
     printf("n_tok %d\n", n_tok);
 
-    int nlayers = n0/(vecdim*n_tok);
+    int nlayers = n/(vecdim*n_tok);
     for (int l=0;l<nlayers;l++) {
         for (int t=0;t<n_tok;t++) {
             float d=0.;

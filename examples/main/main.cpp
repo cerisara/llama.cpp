@@ -187,13 +187,47 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         const size_t * nb = t->nb;
         char * data = (char *)t->data;
         FILE *f=NULL;
-        int n_tok;
+        int n_tok_start = 0;
+        int n_tok_stop = 0;
+        int n_tok = 0;
+
         if (detframe==0) {
-            n_tok = atoi(getenv("N_TOK"));
+            if(atoi(getenv("N_TOK_START")) != atoi(getenv("N_TOK_STOP"))) {
+                if (atoi(getenv("N_TOK_START")) < 0) {
+                    n_tok_start = -atoi(getenv("N_TOK_START"));
+                }
+                if (atoi(getenv("N_TOK_STOP")) < 0) {
+                    n_tok_stop = -atoi(getenv("N_TOK_STOP"));
+                }
+            }
+            else if (atoi(getenv("N_TOK_START")) == -5) {
+                n_tok_start = atoi(getenv("N_TOK_PROMPT"));
+                n_tok_stop = atoi(getenv("N_TOK_PROMPT")) - 1;
+            }
+            else {
+                n_tok_start = atoi(getenv("N_TOK_PROMPT"));
+                n_tok_stop = 0;
+            }
         }
         else {
-            n_tok = 1;
+            if (atoi(getenv("N_TOK_START")) != atoi(getenv("N_TOK_STOP"))) {
+                if (atoi(getenv("N_TOK_START")) <= detframe-1 && atoi(getenv("N_TOK_STOP")) >= detframe) {
+                    n_tok_start = 1;
+                    n_tok_stop = 0;
+                }
+            }
+            else if ((atoi(getenv("N_TOK_START")) == -1) || (atoi(getenv("N_TOK_START")) == -2)) {
+                n_tok_start = 1;
+                n_tok_stop = 0;
+            }
+            else {
+                n_tok_start = 0;
+                n_tok_stop = 0;
+            }
         }
+
+        n_tok = n_tok_start - n_tok_stop;
+        // printf("n_tok %d n_tok_start %d n_tok_stop %d detframe %d\n", n_tok, n_tok_start, n_tok_stop, detframe);
         // printf("detsondebug %s %d %d %d %d - %d %d %d %d - %d %s\n",t->name,ne[0],ne[1],ne[2],ne[3],nb[0],nb[1],nb[2],nb[3],sizeof(char), ggml_type_name(t->type));
         int vecdim = ne[0];
         if (!strncmp(t->name, "node_", 5)) {
@@ -202,24 +236,29 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
         else if (!strncmp(t->name, "q-", 2) || !strncmp(t->name, "k-", 2) || !strncmp(t->name, "v-", 2)) {
             vecdim = ne[0]*ne[2];
         }
-        if (detframe==0) {
-			f = fopen(tensor_path, "wb");
-            fwrite(&vecdim, sizeof(int), 1, f);
-            fwrite(&n_tok, sizeof(int), 1, f);
+        if (n_tok > 0) {
+            if (detframe==0) {
+                f = fopen(tensor_path, "wb");
+                fwrite(&vecdim, sizeof(int), 1, f);
+                fwrite(&n_tok, sizeof(int), 1, f);
+            }
+            else {
+                f = fopen(tensor_path, "rb+");
+                fseek(f, sizeof(int), SEEK_SET);
+                int previous_n_tok;
+                fread(&previous_n_tok, sizeof(int), 1, f);
+                int cur_n_tok = previous_n_tok + n_tok;
+                fseek(f, sizeof(int), SEEK_SET);
+                fwrite(&cur_n_tok, sizeof(int), 1, f);
+                fclose(f);
+                f = fopen(tensor_path, "ab");
+            }
         }
         else {
-			f = fopen(tensor_path, "rb+");
-            fseek(f, sizeof(int), SEEK_SET);
-            int previous_n_tok;
-            fread(&previous_n_tok, sizeof(int), 1, f);
-            int cur_n_tok = previous_n_tok + n_tok;
-            fseek(f, sizeof(int), SEEK_SET);
-            fwrite(&cur_n_tok, sizeof(int), 1, f);
-            fclose(f);
             f = fopen(tensor_path, "ab");
         }
         if (!strncmp(t->name, "node_", 5)) {
-            for (int64_t i2 = ne[2] - n_tok; i2 < ne[2]; i2++) { // timesteps
+            for (int64_t i2 = ne[2] - n_tok_start; i2 < ne[2] - n_tok_stop; i2++) { // timesteps
             for (int64_t i3 = 0; i3 < ne[3]; i3++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
             for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim
@@ -266,7 +305,7 @@ static bool detsondebug(struct ggml_tensor * t, bool ask, void * user_data) {
                 }}}}}
             }
             else {
-                for (int64_t i1 = ne[1] - n_tok; i1 < ne[1]; i1++) { // timesteps
+                for (int64_t i1 = ne[1] - n_tok_start; i1 < ne[1] - n_tok_stop; i1++) { // timesteps
                 for (int64_t i3 = 0; i3 < ne[3]; i3++) {
                 for (int64_t i2 = 0; i2 < ne[2]; i2++) {
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) { // vecdim

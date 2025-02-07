@@ -6,6 +6,8 @@ import os
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def read_binaries(filename):
     tensor = []
@@ -29,7 +31,7 @@ def read_binaries(filename):
             if file_is_empty:
                 break
             tensor.append(matrix)
-    return torch.tensor(tensor)
+    return torch.tensor(tensor).to(device)
 
 
 def get_collinearities(mat):
@@ -37,18 +39,20 @@ def get_collinearities(mat):
     print("mat", mat)
     print("distances", distances)
     is_close = torch.where(distances < 0.1, 1., 0.)
-    collinearities = torch.flip(torch.unique(is_close, dim=0), dims=(0,))
+    is_close_norm = torch.div(is_close, torch.sum(is_close, dim=0)).T
+    fused_closeness = torch.where(torch.isclose(torch.cdist(is_close_norm, is_close_norm, p=1), torch.tensor(2.0)), 0., 1.)
+    collinearities = torch.flip(torch.unique(fused_closeness, dim=0), dims=(0,))
     return torch.div(collinearities.T, torch.sum(collinearities, dim=1)).T
 
 
 def modify_layers(model, layer_to_modify, insertion_type, err_ext):
     print("Reading binaries")
-    err_norm = read_binaries("./bin_tensors/norm." + err_ext)
-    err_out = read_binaries("./bin_tensors/out." + err_ext)
-    err_inp = read_binaries("./bin_tensors/inp." + err_ext)
-    gld_norm = read_binaries("./bin_tensors/norm.gld")
-    gld_out = read_binaries("./bin_tensors/out.gld")
-    gld_inp = read_binaries("./bin_tensors/inp.gld")
+    err_norm = read_binaries("./bin_tensors/norm." + err_ext).to(device)
+    err_out = read_binaries("./bin_tensors/out." + err_ext).to(device)
+    err_inp = read_binaries("./bin_tensors/inp." + err_ext).to(device)
+    gld_norm = read_binaries("./bin_tensors/norm.gld").to(device)
+    gld_out = read_binaries("./bin_tensors/out.gld").to(device)
+    gld_inp = read_binaries("./bin_tensors/inp.gld").to(device)
 
     n_tok = min(err_norm.size(1), gld_norm.size(1))
     n_layers = err_norm.size(0)
@@ -86,10 +90,6 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
             w_up = [w_up * 1.14776]
         else:
             z_edit = torch.matmul(x, w_up.T)
-            # print(z_edit)
-            # print(torch.matmul(x, x.T))
-            # print(torch.norm(x, dim=1))
-
             collinearities = get_collinearities(z_edit)
             x = collinearities@x
             w_up = [collinearities@w_up]
@@ -102,8 +102,9 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
             weighted_w_down = [torch.linalg.solve(gated_z_edit, w_down).T]
             
             print("Condition number", torch.linalg.cond(gated_z_edit))
+            if torch.linalg.cond(gated_z_edit) > 10:
+                print("Condition number too high")
 
-    # print("wd size", weighted_w_down.size(), weighted_w_down)
     for n,m in model.named_modules():
         if n.endswith(".mlp.gate_proj") or n.endswith(".mlp.up_proj"):
             layer = int(n.split(".")[2])
@@ -114,7 +115,6 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
             else:
                 ww = w
             if layer == layer_to_modify or insertion_type == "all":
-                print("Modifying layer ", layer)
                 if insertion_type == "all":
                     w_up_layer = w_up[layer]
                 else:
@@ -126,7 +126,7 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                     with torch.no_grad():
                         ww[-256:-256+w_up_layer.size(0)] = w_up_layer
             m.weight=torch.nn.Parameter(ww)
-            print(n, m.weight.size())
+            # print(n, m.weight.size())
         elif n.endswith(".mlp.down_proj"):
             layer = int(n.split(".")[2])
             w = m.weight
@@ -148,7 +148,7 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                     with torch.no_grad():
                         ww[:,-256:-256+weighted_w_down_layer.size(1)] = weighted_w_down_layer
             m.weight=torch.nn.Parameter(ww)
-            print(n, m.weight.size()) 
+            # print(n, m.weight.size()) 
 
 
 def saving_model(model, tokenizer, layer_to_modify, insertion_type):
@@ -176,10 +176,10 @@ def main():
         d = os.path.dirname(model_path)
         m = os.path.basename(model_path)
         tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
-        model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
+        model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m).to(device)
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(model_path)
+        model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
 
     modify_layers(model, layer_to_modify, insertion_type, err_ext)
 
