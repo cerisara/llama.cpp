@@ -2,184 +2,221 @@
 \usepackage{hyperref}
 \usepackage{fixltx2e}
 \usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{svg}
 \usepackage[left=2cm, right=2cm]{geometry}
 
 \begin{document}
 
 
-    \section{Variable defintion}
-        \begin{equation}
-            X, X', Y, W_{N} \in \mathbb{R}^{b \times t \times d\textsubscript{model}}
-        \end{equation}
-        \begin{equation}
-            Z, Z' \in \mathbb{R}^{b \times t \times d\textsubscript{ff}}
-        \end{equation}
-        \begin{equation}
-            W_{U}, W_{G} \in \mathbb{R}^{b \times d\textsubscript{model} \times d\textsubscript{ff}}
-        \end{equation}
-        \begin{equation}
-            W_{D} \in \mathbb{R}^{b \times d\textsubscript{ff} \times d\textsubscript{model}}
-        \end{equation}
+
+
+
+\section{Problem setting}
+
+% TODO: Use better example and formalize better in accordance with literature.
+%     Given a question $(s, r)$ that can't be answered by model $f$'s knowledge but can be answered by being given fact $(s, r, o)$ throught In-Context Learning.
+%     We want to build a new model $\hat{f}$ that doesn't need In-Context Learning to answer the question.
+%     This is what we call an Edit Success.
+%     \begin{equation}
+%         \hat{f}((s, r)) \approx f(Concat((s, r, o), (s, r))) = o
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"Who won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+%     % \end{equation}
+%     If we then give a question $(s', r)$ or $(s, r')$ with $s$ paraphrasing $s'$ and $r$ paraphrasing $r'$, the new model should generalize by answering without In-Context Learning.
+%     This is what we call respectively subject generalization and relation generalization.
+%     \begin{equation}
+%         \hat{f}((s', r)) \approx f(Concat((s, r, o), (s, r))) = o
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"Who won 2026 most famous European football league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+%     % \end{equation}
+%     \begin{equation}
+%         \hat{f}((s, r')) \approx f(Concat((s, r, o), (s, r))) = o
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"Who got the trophy of the 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
+%     % \end{equation}
+%     If we now give a question $(s'', r)$ or $(s, r'')$ with $s \neq s''$  and $r \neq r''$ that shouldn't be modified by knowing fact $(s, r, o)$, our new model should behave the same as the base model.
+%     This is what we call respectively subject specificity and relation specificity.
+%     \begin{equation}
+%         \hat{f}((s'', r)) \approx f((s'', r)) = o''
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"Who won 2024 UEFA Champions league ?"}) \approx f(\text{"Who won 2024 UEFA Champions league ?"}) = "Real Madrid"
+%     % \end{equation}
+%     \begin{equation}
+%         \hat{f}((s, r'')) \approx f((s, r'')) = o''
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"When does the 2026 UEFA Champions league starts ?"}) \approx f(\text{"When does the 2026 UEFA Champions league starts?"}) = "September 16th 2025"
+%     % \end{equation}
+%     Given a fact $(s, r''', o''')$ already known by the base model without In-Context Learning, the model should be able to answer a multihop question such as $((s, r), r''')$.
+%     This is what we call multihop reasoning.
+%     \begin{equation}
+%         \hat{f}(((s, r), r''')) \approx f(Concat((s, r, o), ((s, r), r'''))) = o'''
+%     \end{equation}
+%     % \begin{equation}
+%     %     \hat{f}(\text{"From which country is the team that won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. From which country is the team that won 2026 UEFA Champions league ?"}) = "England"
+%     % \end{equation}
+\\
+
+\noindent
+We define two prompts, the erroneous prompt with only the question about the fact we want to insert and the gold prompt that also contains the fact that answers the question.
+(e.g "Who is the US president as of February 2025?" and "Donald trump is the president of USA since January 20th 2025. Who is the US president as of February 2025?")
+
+\noindent
+We can then define $X^{err}$ and $X^{gld}$ as the input of a single FFN layer given each prompt. And reciprocally, we define $Y^{\prime err}$ and $Y^{\prime gld}$ as the output of this same layer for the same prompts.
+We can now define our knowledge insertion goal as:
+$$FFN(X^{err}) \approx Y^{\prime gld}$$
+
+\section{Forward path}
+
+    We will focus on a single FFN layer. Such that :
+    \begin{itemize}
+        \item $X$ is the input to the FFN
+        \item $X'$ is the normalized input weighted by $W_N$ (i.e $X' = norm(X) \times W_{N}$)
+        \item $Z$ is the output of the first linear layer parametrized by $W_U$ (i.e $Z = X' W_{U}$)
+        \item $Z'$ is the output of the SwiGLU activation function parametrized by $W_G$ (i.e $Z' = SiLU(X' W_{G}) \times Z$)
+        \item $Y$ is the output of the second linear layer parametrized by $W_D$ (i.e $Y = Z' W_{D}$)
+        \item $Y'$ is the output of the FFN after skip-connection (i.e $Y' = Y + X$)    
+    \end{itemize}
+
+    \noindent
+    The batch dimension is given by $n\textsubscript{edit}$, the number of edits we want to insert.
+    The token dimension $n\textsubscript{tok}$, however, only considers the token that we want to edit, the others are ignored.
+    $d\textsubscript{model}$ and $d\textsubscript{ff}$ describe, respectively, the dimension of the input/output and the hidden dimension.
+
+    \noindent
+    The tensors can be defined as such:
+    \begin{itemize}
+        \item $X, X', Y \in \mathbb{R}^{(n\textsubscript{edit} \times n\textsubscript{tok}) \times d\textsubscript{model}}$
+        \item $Z, Z' \in \mathbb{R}^{(n\textsubscript{edit} \times n\textsubscript{tok}) \times d\textsubscript{ff}}$
+        \item $W_{N} \in \mathbb{R}^{d\textsubscript{model}}$
+        \item $W_{U}, W_{G} \in \mathbb{R}^{d\textsubscript{model} \times d\textsubscript{ff}}$
+        \item $W_{D} \in \mathbb{R}^{d\textsubscript{ff} \times d\textsubscript{model}}$
+    \end{itemize}
+
+    \noindent
+    The compute graph of this forward path is illustrated in Fig.\ref{fig:forward_pre_edit}.
+    In this case, $n\textsubscript{edit} \times n\textsubscript{tok} = 2$, $d\textsubscript{model} = 4$ and $d\textsubscript{ff} = 6$
+
+    \begin{figure}
+        \centering
+        \includesvg[width=\textwidth]{imgs/forward_pre_edit}
+        \caption{FFN forward path}
+        \label{fig:forward_pre_edit}
+    \end{figure}
 
 
 
 
-    \section{Forward Path}
-        \begin{equation}
-            X' = norm(X) \times W_{N}
-        \end{equation}
-        \begin{equation}
-            Z = X' W_{U}
-        \end{equation}
-        \begin{equation}
-            Z' = Silu(X' W_{G}) \times Z
-        \end{equation}
-        \begin{equation}
-            Y = Z' W_{D} + X
-        \end{equation}
+
+\section{Update weight}
+
+    Our goal is to append weights along the $d\textsubscript{ff}$ dimension that will encode our edits. Therefore, the new weights can be described as such:
+    
+    $$W_{U}^{new} = Concat(W_{U}, W_{U}^{edit})\text{, } W_{G}^{new} = Concat(W_{G}, W_{G}^{edit}) \text{ and } W_{D}^{new} = Concat(W_{D}, W_{D}^{edit})$$
+    
+    \noindent
+    These new edit extensions can be described similarly as the original tensors where $d\textsubscript{ff}$ is replaced by $n\textsubscript{edit} \times n\textsubscript{tok}$ the dimensionality of our edits:
+    \begin{itemize}
+        \item $Z^{edit}, Z^{\prime edit} \in \mathbb{R}^{(n\textsubscript{edit} \times n\textsubscript{tok}) \times (n\textsubscript{edit} \times n\textsubscript{tok})}$
+        \item $W_{U}^{edit}, W_{G}^{edit} \in \mathbb{R}^{d\textsubscript{model} \times (n\textsubscript{edit} \times n\textsubscript{tok})}$
+        \item $W_{D}^{edit} \in \mathbb{R}^{(n\textsubscript{edit} \times n\textsubscript{tok}) \times d\textsubscript{model}}$
+    \end{itemize}
+
+    % \begin{equation}
+    %     Z^{new}, Z^{\prime new} \in \mathbb{R}^{n\textsubscript{edit} \times n\textsubscript{tok} \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
+    % \end{equation}
+    % \begin{equation}
+    %     W_{U}^{new}, W_{G}^{new} \in \mathbb{R}^{d\textsubscript{model} \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
+    % \end{equation}
+    % \begin{equation}
+    %     W_{D}^{new} \in \mathbb{R}^{(d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok})) \times d\textsubscript{model}}
+    % \end{equation}
 
 
 
 
-    \section{Problem setting}
-        Given a question $(s, r)$ that can't be answered by model $f$'s knowledge but can be answered by being given fact $(s, r, o)$ throught In-Context Learning.
-        We want to build a new model $\hat{f}$ that doesn't need In-Context Learning to answer the question.
-        This is what we call an Edit Success.
-        \begin{equation}
-            \hat{f}((s, r)) \approx f(Concat((s, r, o), (s, r))) = o
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"Who won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
-        \end{equation}
-        If we then give a question $(s', r)$ or $(s, r')$ with $s$ paraphrasing $s'$ and $r$ paraphrasing $r'$, the new model should generalize by answering without In-Context Learning.
-        This is what we call respectively subject generalization and relation generalization.
-        \begin{equation}
-            \hat{f}((s', r)) \approx f(Concat((s, r, o), (s, r))) = o
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"Who won 2026 most famous European football league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
-        \end{equation}
-        \begin{equation}
-            \hat{f}((s, r')) \approx f(Concat((s, r, o), (s, r))) = o
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"Who got the trophy of the 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. Who won 2026 UEFA Champions league ?"}) = "Manchester City"
-        \end{equation}
-        If we now give a question $(s'', r)$ or $(s, r'')$ with $s \neq s''$  and $r \neq r''$ that shouldn't be modified by knowing fact $(s, r, o)$, our new model should behave the same as the base model.
-        This is what we call respectively subject specificity and relation specificity.
-        \begin{equation}
-            \hat{f}((s'', r)) \approx f((s'', r)) = o''
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"Who won 2024 UEFA Champions league ?"}) \approx f(\text{"Who won 2024 UEFA Champions league ?"}) = "Real Madrid"
-        \end{equation}
-        Or
-        \begin{equation}
-            \hat{f}((s, r'')) \approx f((s, r'')) = o''
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"When does the 2026 UEFA Champions league starts ?"}) \approx f(\text{"When does the 2026 UEFA Champions league starts?"}) = "September 16th 2025"
-        \end{equation}
-        Given a fact $(s, r''', o''')$ already known by the base model without In-Context Learning, the model should be able to answer a multihop question such as $((s, r), r''')$.
-        This is what we call multihop reasoning.
-        \begin{equation}
-            \hat{f}(((s, r), r''')) \approx f(Concat((s, r, o), ((s, r), r'''))) = o'''
-        \end{equation}
-        \begin{equation}
-            \hat{f}(\text{"From which country is the team that won 2026 UEFA Champions league ?"}) \approx f(\text{"Manchester City won 2026 UEFA Champions league. From which country is the team that won 2026 UEFA Champions league ?"}) = "England"
-        \end{equation}
 
+\section{Updated forward path}
 
-    \section{Update weight}
-        \begin{equation}
-            W_{U}^{new} = Concat(W_{U}, W_{U}^{update})
-        \end{equation}
-        \begin{equation}
-            W_{G}^{new} = Concat(W_{G}, W_{G}^{update})
-        \end{equation}
-        \begin{equation}
-            W_{D}^{new} = Concat(W_{D}, W_{D}^{update})
-        \end{equation}
+    With these new definitions, we can rewrite our forward path post-edit, here illustrated in Fig.\ref{fig:forward_update}.
+    $X$ is replaced by $X^{err}$, the input without the fact in the context of the prompt.
+    The blue color in Fig.\ref{fig:forward_update} represents the matrices that are not changed by the addition of the edit weights.
+    Therefore, we only need to rewrite the orange matrices that change post-edit. In Fig.\ref{fig:forward_update_alt}, we present the forward path without the frozen path that we can't modify.
+    For simplicity, we arbitrarily decide that $W_{U}^{edit} = W_{G}^{edit}$.
 
+    \begin{itemize}
+        \item $Z^{edit} = X^{\prime err} W_{U}^{edit}$
+        \item $\begin{aligned}[t]
+            Z^{\prime edit} & = SiLU(X^{\prime err} W_{G}^{edit}) \times Z^{edit}\\
+                      & = SiLU(X^{\prime err} W_{U}^{edit}) \times Z^{edit}\\
+                      & = SiLU(Z^{edit}) \times Z^{edit}\\
+                      & = {Z^{edit}}^2 \times Sigmoid(Z^{edit})
+            \end{aligned}$
+        \item $Y^{new} = Z^{\prime new} W_{D}^{new}$
+        \item $Y^{\prime new} = Y^{new} + X^{err}$
+    \end{itemize}
 
-        \begin{equation}
-            Z^{update}, Z'^{update} \in \mathbb{R}^{(b \times t) \times (n\textsubscript{edit} \times n\textsubscript{tok})}
-        \end{equation}
-        \begin{equation}
-            W_{U}^{update}, W_{G}^{update} \in \mathbb{R}^{b \times d\textsubscript{model} \times (n\textsubscript{edit} \times n\textsubscript{tok})}
-        \end{equation}
-        \begin{equation}
-            W_{D}^{update} \in \mathbb{R}^{b \times (n\textsubscript{edit} \times n\textsubscript{tok}) \times d\textsubscript{model}}
-        \end{equation}
+    \begin{figure}
+        \centering
+        \includesvg[width=\textwidth]{imgs/forward_update}
+        \caption{Updated FFN forward path}
+        \label{fig:forward_update}
+    \end{figure}
 
 
 
 
-    \section{New variables defintion}
-        \begin{equation}
-            Z^{new}, Z'^{new} \in \mathbb{R}^{b \times t \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
-        \end{equation}
-        \begin{equation}
-            W_{U}^{new}, W_{G}^{new} \in \mathbb{R}^{b \times d\textsubscript{model} \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok}))}
-        \end{equation}
-        \begin{equation}
-            W_{D}^{new} \in \mathbb{R}^{b \times (d\textsubscript{ff} + (n\textsubscript{edit} \times n\textsubscript{tok})) \times d\textsubscript{model}}
-        \end{equation}
+
+\section{$W_{U}^{edit}$ computation}
+
+    To maximize specificity, we want $Z^{edit}$ to trigger only when the input is related to $X^{err}$.
+    As $Z^{edit} = X^{\prime err} W_{U}^{edit}$, we could simply set $W_{U}^{edit} = X^{{\prime err}^T}$.
+    However, since $X^{\prime err}$ is weighted by $W_N$, to obtain a dot product of 1, we need to divide it by the square of the 2-norm along the $n\textsubscript{edit} \times n\textsubscript{tok}$ dimensions, obtaining:
+
+    $$W_{U}^{edit} = W_{G}^{edit} = \frac{X^{{\prime err}^T}}{{||X^{{\prime err}^T}||}_2^2}$$
 
 
 
 
-    \section{Updated forward path}
-        \begin{equation}
-            W_{U}^{update} = W_{G}^{update} = \frac{X'^{err}}{{{||X'^{err}||}_2}^2}
-        \end{equation}
-        \begin{equation}
-            Z^{update} = X'^{err} W_{U}^{update}
-        \end{equation}
-        \begin{equation}
-            Z'^{update} = Silu(X'{err} W_{G}^{update}) \times Z^{update}
-        \end{equation}
-        \begin{equation}
-            Z'^{update} = Silu(X'{err} W_{U}^{update}) \times Z^{update}
-        \end{equation}
-        \begin{equation}
-            Z'^{update} = Silu(Z^{update}) \times Z^{update}
-        \end{equation}
-        \begin{equation}
-            Z'^{update} = {Z^{update}}^2 \times Sigmoid(Z^{update})
-        \end{equation}
-        \begin{equation}
-            W_{D}^{update} = Z'^{update}^{-1}(Y^{gld} - Y^{err})
-        \end{equation}
+
+\section{$W_{D}^{edit}$ computation}
+
+    To maximize edit success, we want $Y^{\prime new}$ to be as close as possible to $Y^{\prime gld}$, the output with the fact in the context of the prompt.
+    We can therefore solve the following equation:
+
+    $\begin{aligned}
+                   Y^{\prime new} & = Y^{new} + X{err}\\
+                   Y^{\prime new} & = Z^{\prime new} W_{D}^{new} + X{err}\\
+                   Y^{\prime gld} & = Z^{\prime new} W_{D}^{new} + X{err}\\
+                   Y^{\prime gld} & = Concat(Z', Z^{\prime edit}) Concat(W_{D}, W_{D}^{edit}) + X{err}\\
+                   Y^{\prime gld} & = Z' W_{D} + Z^{\prime edit} W_{D}^{edit} + X{err}\\
+                   Y^{\prime gld} & = Y^{\prime err} + Z^{\prime edit} W_{D}^{edit}\\
+        Y^{\prime gld} - Y^{\prime err} & = Z^{\prime edit} W_{D}^{edit}\\
+               W_{D}^{edit} & = Z^{{\prime edit}^{-1}}(Y^{\prime gld} - Y^{\prime err})
+    \end{aligned}$
+    
+    \begin{figure}[h]
+        \centering
+        \includesvg[width=0.7\textwidth]{imgs/forward_update_alt}
+        \caption{Updated FFN forward path without frozen path}
+        \label{fig:forward_update_alt}
+    \end{figure}
 
 
 
 
-    \section{Details of $W_{D}^{update}$ computation}
-        \begin{equation}
-            Y^{new} = Z'^{new} W_{D}^{new} + X{err}
-        \end{equation}
-        \begin{equation}
-            Y^{new} = Concat(Z', Z'^{update}) Concat(W_{D}, W_{D}^{update}) + X{err}
-        \end{equation}
-        \begin{equation}
-            Y^{new} = Z' W_{D} + Z'^{update} W_{D}^{update} + X{err}
-        \end{equation}
-        \begin{equation}
-            Y^{new} = Y^{err} + Z'^{update} W_{D}^{update}
-        \end{equation}
-        \begin{equation}
-            Y^{gld} = Y^{err} + Z'^{update} W_{D}^{update}
-        \end{equation}
-        \begin{equation}
-            Y^{gld} - Y^{err} = Z'^{update} W_{D}^{update}
-        \end{equation}
-        \begin{equation}
-            W_{D}^{update} = Z'^{update}^{-1}(Y^{gld} - Y^{err})
-        \end{equation}
+
+\section{Acknowledgment}
+Experiments presented in this paper were carried out using the Grid'5000 testbed, supported by a scientific interest group hosted by Inria and including CNRS, RENATER and several Universities as well as other organizations (see https://www.grid5000.fr). 
 
 
-        Aknowledgement grid 5000 https://www.grid5000.fr/w/Grid5000:UsagePolicy
+
 
 
 \end{document}
