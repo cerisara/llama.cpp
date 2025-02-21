@@ -24,6 +24,21 @@ TENSORS_EXT="err" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_
 # TENSORS_EXT="gld" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -m $m -co -sp -p "$gld_prompt" -fa -ngl 80 -n 128 --no-warmup --temp 0
 # TENSORS_EXT="err" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -m $m -co -sp -p "$err_prompt" -fa -ngl 80 -n 128 --no-warmup --temp 0
 
+# TENSORS_EXT="para1" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "Shayna does this and Yossel goes still and dies. Danielle Darrieux, a native" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="para2" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "An album was recorded for Capitol Nashville but never released. Danielle Darrieux spoke the language" -fa -ngl 80 -n 128 --no-warmup --temp 0
+
+# TENSORS_EXT="neighboor1" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "The mother tongue of Léon Blum is" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor2" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "The native language of Montesquieu is" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor3" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "François Bayrou, a native" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor4" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "The native language of Raymond Barre is" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor5" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "Michel Rocard is a native speaker of" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor6" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "Jacques Chaban-Delmas is a native speaker of" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor7" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "The native language of François Bayrou is" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor8" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "Maurice Genevoix, speaker of" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor9" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "The mother tongue of François Bayrou is" -fa -ngl 80 -n 128 --no-warmup --temp 0
+# TENSORS_EXT="neighboor10" N_TOK_PROMPT="$n_tok_prompt" N_TOK_START="$n_tok_start" N_TOK_STOP="$n_tok_stop" build/bin/llama-cli -m $m -co -sp -p "Melchior de Vogüé, speaker of" -fa -ngl 80 -n 128 --no-warmup --temp 0
+
+
 err_ext=err
 
 if [ "$insertion_type" = "reccursive" ]
