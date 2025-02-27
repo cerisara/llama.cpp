@@ -2,42 +2,66 @@ import struct
 import json
 import sys
 import os
+import time
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from modified_models.modified_qwen2 import Qwen2ModifiedForCausalLM, Qwen2ModifiedConfig
 import torch
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Device:", device)
 # TRESHOLD = 0.8
 # STRENGTH = 50
 TRESHOLD = 0.0
 STRENGTH = 1
 BIAS1 = 1
 
-def read_binaries(filename):
-    tensor = []
-    with open(filename, "rb") as f:
-        vecdim = struct.unpack("i", f.read(4))[0]
-        n_tok = struct.unpack("i", f.read(4))[0]
-        file_is_empty = False
-        while True:
-            matrix = []
-            for _ in range(n_tok):
-                vector = []
-                for _ in range(vecdim):
-                    raw_val = f.read(4)
-                    if len(raw_val) < 4:
-                        file_is_empty = True
-                        break
-                    vector.append(struct.unpack("f", raw_val)[0])
-                if file_is_empty:
-                    break
-                matrix.append(vector)
-            if file_is_empty:
-                break
-            tensor.append(matrix)
-    return torch.tensor(tensor).to(device)
 
+# No future token or selective token yet or handling different number of tokens
+def extract_activations(model, tokenizer, prompts, prompts_labels, formatted_activations, n_tok_prompt, n_tok_start, n_tok_stop):
+    activations = {'inp': [], 'out': [], "residual": []}
+    n_tok = 0
+
+    def hook_inp(model, input, output):
+        activations["inp"].append(input[0].detach())
+    def hook_out(model, input, output):
+        activations["out"].append(output.detach())
+    def hook_residual(model, input, output):
+        nonlocal n_tok
+        if n_tok == 0:
+            n_tok = input[0].size(1)
+        if input[0].size(1) > 1:
+            activations["residual"].append(input[0].detach())
+        else:
+            activations["residual"].append(input[0].detach().repeat(1, n_tok, 1))
+
+    handles = []
+    for n, m in model.named_modules():
+        if n.endswith(".mlp.gate_proj"):
+            handles.append(m.register_forward_hook(hook_inp))
+        elif n.endswith(".mlp.down_proj"):
+            handles.append(m.register_forward_hook(hook_out))
+        elif n.endswith(".post_attention_layernorm"):
+            handles.append(m.register_forward_hook(hook_residual))
+
+    inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
+
+    with torch.no_grad():
+        model(**inputs)
+
+    for handle in handles:
+        handle.remove()
+
+    for k, v in activations.items():
+        activations[k] = torch.stack(v, dim=0)
+
+    for i, prompt_label in enumerate(prompts_labels):
+        formatted_activations[prompt_label] = {}
+        formatted_activations[prompt_label]["inp"] = activations["inp"][:,i,-n_tok_prompt:]
+        formatted_activations[prompt_label]["out"] = activations["out"][:,i,-n_tok_prompt:] + activations["residual"][:,i,-n_tok_prompt:]
+
+    return formatted_activations
 
 def get_collinearities(mat):
     distances = torch.cdist(mat, mat, p=2)
@@ -50,33 +74,23 @@ def get_collinearities(mat):
     return torch.div(collinearities.T, torch.sum(collinearities, dim=1)).T
 
 
-def modify_layers(model, layer_to_modify, insertion_type, err_ext):
-    print("Reading binaries")
-    err_norm = read_binaries("./bin_tensors/norm." + err_ext).to(device)
-    err_out = read_binaries("./bin_tensors/out." + err_ext).to(device)
-    err_inp = read_binaries("./bin_tensors/inp." + err_ext).to(device)
-    gld_norm = read_binaries("./bin_tensors/norm.gld").to(device)
-    gld_out = read_binaries("./bin_tensors/out.gld").to(device)
-    gld_inp = read_binaries("./bin_tensors/inp.gld").to(device)
+def modify_layers(model, layer_to_modify, insertion_type, activations):
+    err_inp = activations["err"]["inp"].to(device)
+    err_out = activations["err"]["out"].to(device)
+    gld_inp = activations["gld"]["inp"].to(device)
+    gld_out = activations["gld"]["out"].to(device)
 
-    # para_norms = [read_binaries("./bin_tensors/norm.para" + str(i)) for i in range(1, 3)]
-    # neighboor_norms = [read_binaries("./bin_tensors/norm.neighboor" + str(i)) for i in range(1, 11)]
+    # para_inps = [read_binaries("./bin_tensors/inp.para" + str(i)) for i in range(1, 3)]
+    # neighboor_inps = [read_binaries("./bin_tensors/inp.neighboor" + str(i)) for i in range(1, 11)]
 
-    n_tok = min(err_norm.size(1), gld_norm.size(1))
-    n_layers = err_norm.size(0)
+    n_layers = err_inp.size(0)
+    n_tok = err_inp.size(1)
 
-    err_norm = err_norm[:,:n_tok]
-    err_out = err_out[:,:n_tok]
-    err_inp = err_inp[:,:n_tok]
-    gld_norm = gld_norm[:,:n_tok]
-    gld_out = gld_out[:,:n_tok]
-    gld_inp = gld_inp[:,:n_tok]
+    print("Vectors dims", err_inp.size(), err_out.size(), err_inp.size(), gld_inp.size(), gld_out.size(), gld_inp.size())
 
-    print("Vectors dims", err_norm.size(), err_out.size(), err_inp.size(), gld_norm.size(), gld_out.size(), gld_inp.size())
-
-    # x = err_norm
+    # x = err_inp
     # w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
-    # w_down = gld_out - err_out + gld_inp - err_inp
+    # w_down = gld_out - err_out
     # z_edit = torch.matmul(x, w_up.permute(0, 2, 1))
 
     # collinearities = [get_collinearities(z_edit_layer) for z_edit_layer in z_edit]
@@ -84,20 +98,20 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
     # w_up = [collinearities_layer@w_up_layer for collinearities_layer, w_up_layer in zip(collinearities, w_up)]
     # for layer in range(n_layers):
     #     print("PARA -----------------------------------------------------------------------" + str(layer))
-    #     for para_norm in para_norms:
-    #         print(para_norm[layer].shape, w_up[layer].T.shape)
-    #         print("z_para", torch.matmul(para_norm[layer], w_up[layer].T))
+    #     for para_inp in para_inps:
+    #         print(para_inp[layer].shape, w_up[layer].T.shape)
+    #         print("z_para", torch.matmul(para_inp[layer], w_up[layer].T))
     #     print("NEIGHBOOR -----------------------------------------------------------------------" + str(layer))
-    #     for neighboor_norm in neighboor_norms:
-    #         print(neighboor_norm[layer].shape, w_up[layer].T.shape)
-    #         print("z_neighboor", torch.matmul(neighboor_norm[layer], w_up[layer].T))
+    #     for neighboor_inp in neighboor_inps:
+    #         print(neighboor_inp[layer].shape, w_up[layer].T.shape)
+    #         print("z_neighboor", torch.matmul(neighboor_inp[layer], w_up[layer].T))
 
 
     if insertion_type == "all":
         # not tested yet
-        x = err_norm
+        x = err_inp
         w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
-        w_down = gld_out - err_out + gld_inp - err_inp
+        w_down = gld_out - err_out
         z_edit = torch.matmul(x, w_up.permute(0, 2, 1))
 
         collinearities = [get_collinearities(z_edit_layer) for z_edit_layer in z_edit]
@@ -109,9 +123,9 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
         
         weighted_w_down = [torch.linalg.solve(gated_z_edit_layer, w_down_layer).T for gated_z_edit_layer, w_down_layer in zip(gated_z_edit, w_down)] + [w_down[-1].T]
     else:
-        x = err_norm[layer_to_modify]
+        x = err_inp[layer_to_modify]
         w_up = torch.div(x, (torch.norm(x, dim=1).unsqueeze(-1)**2))
-        w_down = gld_out[layer_to_modify] - err_out[layer_to_modify] + gld_inp[layer_to_modify] - err_inp[layer_to_modify]
+        w_down = gld_out[layer_to_modify] - err_out[layer_to_modify]
         if layer_to_modify == n_layers-1:
             weighted_w_down = [w_down]
             w_up = [w_up * 1.14776]
@@ -142,8 +156,9 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
             w = m.weight
             b = m.bias
             if layer_to_modify == 0 or insertion_type != "reccursive":
-                w = torch.cat([w, torch.zeros(256, w.size(1))])
-                b = torch.zeros(w.size(0))
+                w = torch.cat([w, torch.zeros(256, w.size(1)).to(device)])
+                b = torch.zeros(w.size(0)).to(device)
+                m.in_features += 256
             if layer == layer_to_modify or insertion_type == "all":
                 if insertion_type == "all":
                     w_up_layer = w_up[layer]
@@ -167,14 +182,14 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                             w[-256:-256+w_up_layer.size(0)] = w_up_layer*(1/STRENGTH)
                             # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*((1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)
                             # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*BIAS1
-            m.out_features += 256
             m.weight = torch.nn.Parameter(w)
             m.bias = torch.nn.Parameter(b)
         elif n.endswith(".mlp.down_proj"):
             layer = int(n.split(".")[2])
             w = m.weight
             if layer_to_modify == 0 or insertion_type != "reccursive":
-                w = torch.cat([w,  torch.zeros(w.size(0), 256)], dim=1)
+                w = torch.cat([w,  torch.zeros(w.size(0), 256).to(device)], dim=1)
+                m.out_features += 256
             if layer == layer_to_modify or insertion_type == "all":
                 print("Modifying layer ", layer)
                 if insertion_type == "all":
@@ -187,57 +202,37 @@ def modify_layers(model, layer_to_modify, insertion_type, err_ext):
                 else:
                     with torch.no_grad():
                         w[:,-256:-256+weighted_w_down_layer.size(1)] = weighted_w_down_layer
-            m.in_features += 256
             m.weight = torch.nn.Parameter(w)
             # print(n, m.weight.size())
 
-    model.config.to_json_file("./torch_model/config.json")
-    modified_config = Qwen2ModifiedConfig.from_json_file("./torch_model/config.json")
-    modified_model = Qwen2ModifiedForCausalLM(modified_config)
-    modified_model.set_input_embeddings(model.get_input_embeddings())
-    modified_model.set_output_embeddings(model.get_output_embeddings())
-    modified_model.set_decoder(model.get_decoder())
     if layer_to_modify == 0 or insertion_type!="reccursive":
-        modified_model.config.intermediate_size = modified_model.config.intermediate_size +256
+        model.config.intermediate_size = model.config.intermediate_size + 256
 
-    return modified_model
+    return model
 
+def main(model, tokenizer, gld_prompt, err_prompt, n_tok_prompt, n_tok_start, n_tok_stop, insertion_type, layer_to_modify):
+    prompts = [gld_prompt, err_prompt]
+    prompts_labels = ["gld", "err"]
+    activations = {"gld": {}, "err": {}}
+    activations = extract_activations(model, tokenizer, prompts, prompts_labels, activations, n_tok_prompt, n_tok_start, n_tok_stop)
 
-def saving_model(model, tokenizer, layer_to_modify, insertion_type):
-    print("Saving to torch_model")
-    tokenizer.save_pretrained('torch_model')
-    model.save_pretrained('torch_model')
-
-
-def main():
-    model_path = sys.argv[1]
-    layer_to_modify = int(sys.argv[2])
-    err_ext = sys.argv[3]
-    insertion_type = sys.argv[4]
-
-    print("Loading model", model_path)
-    if os.path.exists(model_path):
-        print("Loading model from gguf")
-        d = os.path.dirname(model_path)
-        m = os.path.basename(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(d, gguf_file=m)
-        print("Tokenizer loaded")
-        # model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m).to(device)
-        model = AutoModelForCausalLM.from_pretrained(d, gguf_file=m)
-        print("Model loaded")
+    if insertion_type == "reccursive":
+        for i in range(model.config.num_hidden_layers):
+            model = modify_layers(model, i, insertion_type, activations)
+            activations = extract_activations(model, tokenizer, [err_prompt], ["err"], activations, n_tok_prompt, n_tok_start, n_tok_stop)
     else:
-        print("Loading model from huggingface")
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        # model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
-        model = Qwen2ModifiedForCausalLM.from_pretrained(model_path)
+        model = modify_layers(model, layer_to_modify, insertion_type, activations)
 
-    print("Modifying model")
-    model = modify_layers(model, layer_to_modify, insertion_type, err_ext)
-
-    saving_model(model, tokenizer, layer_to_modify, insertion_type)
-
-    # model = AutoModelForCausalLM.from_pretrained("./torch_model").to(device)
-    model = Qwen2ModifiedForCausalLM.from_pretrained("./torch_model")
+    return model, tokenizer
 
 if __name__ == '__main__':
-    main()  
+    model = sys.argv[1]
+    tokenizer = sys.argv[2]
+    gld_prompt = sys.argv[3]
+    err_prompt = sys.argv[4]
+    n_tok_prompt = int(sys.argv[5])
+    n_tok_start = int(sys.argv[6])
+    n_tok_stop = int(sys.argv[7])
+    insertion_type = sys.argv[8]
+    layer_to_modify = int(sys.argv[9])
+    main(model, tokenizer, gld_prompt, err_prompt, n_tok_prompt, n_tok_start, n_tok_stop, insertion_type, layer_to_modify)
