@@ -175,6 +175,12 @@ $$FFN(X^{err}) \approx Y^{\prime gld}$$
 
 \section{$W_{U}^{edit}$ computation}
 
+	Hyp: we assume locality of concepts, i.e., that it is enough to make $Y^{err}$ match $Y^{gld}$ only
+	at the chosen layers and $ntok$ timesteps. It is of course possible to relax this assumption by
+	recursively applying this process to multiple layers and multiple timesteps.
+	However, because of combinatorial explosition, it is reasonable in this case to target a continuous span of
+	successive layers and timesteps.
+
     To maximize specificity, we want $Z^{edit}$ to trigger only when the input is related to $X^{err}$.
     As $Z^{edit} = X^{\prime err} W_{U}^{edit}$, we could simply set $W_{U}^{edit} = X^{{\prime err}^T}$.
     However, since $X^{\prime err}$ is weighted by $W_N$, to obtain a dot product of 1, we need to divide it by the square of the 2-norm along the $n\textsubscript{edit} \times n\textsubscript{tok}$ dimensions, obtaining:
