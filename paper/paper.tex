@@ -175,6 +175,7 @@ $$FFN(X^{err}) \approx Y^{\prime gld}$$
 
 \section{$W_{U}^{edit}$ computation}
 
+
     To maximize specificity, we want $Z^{edit}$ to trigger only when the input is related to $X^{err}$.
     As $Z^{edit} = X^{\prime err} W_{U}^{edit}$, we could simply set $W_{U}^{edit} = X^{{\prime err}^T}$.
     However, since $X^{\prime err}$ is weighted by $W_N$, to obtain a dot product of 1, we need to divide it by the square of the 2-norm along the $n\textsubscript{edit} \times n\textsubscript{tok}$ dimensions, obtaining:
@@ -187,6 +188,12 @@ $$FFN(X^{err}) \approx Y^{\prime gld}$$
 
 \section{$W_{D}^{edit}$ computation}
 
+	Hyp: we assume locality of concepts, i.e., that it is enough to make $Y^{err}$ match $Y^{gld}$ only
+	at the chosen layers and $ntok$ timesteps. It is of course possible to relax this assumption by
+	recursively applying this process to multiple layers and multiple timesteps.
+	However, because of combinatorial explosition, it is reasonable in this case to target a continuous span of
+	successive layers and timesteps.
+ 
     To maximize edit success, we want $Y^{\prime new}$ to be as close as possible to $Y^{\prime gld}$, the output with the fact in the context of the prompt.
     We can therefore solve the following equation:
 
@@ -200,7 +207,12 @@ $$FFN(X^{err}) \approx Y^{\prime gld}$$
         Y^{\prime gld} - Y^{\prime err} & = Z^{\prime edit} W_{D}^{edit}\\
                W_{D}^{edit} & = Z^{{\prime edit}^{-1}}(Y^{\prime gld} - Y^{\prime err})
     \end{aligned}$
-    
+   
+	When editing a single timestep ($ntok=1$)i with a single edit, $Z^{\prime edit}$ is scalar and there is no issue
+	with its inverse. Otherwise, we should ensure that there's as many edits as target tokens, and that all edits are
+	independent, which is not straightforward.
+	So in practice, we edit only one token and one timestep at a time.
+
     \begin{figure}[h]
         \centering
         \includesvg[width=0.7\textwidth]{imgs/forward_update_alt}
