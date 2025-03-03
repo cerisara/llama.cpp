@@ -20,21 +20,12 @@ BIAS1 = 1
 
 # No future token or selective token yet or handling different number of tokens
 def extract_activations(model, tokenizer, prompts, prompts_labels, formatted_activations, n_tok_prompt, n_tok_start, n_tok_stop):
-    activations = {'inp': [], 'out': [], "residual": []}
-    n_tok = 0
-
     def hook_inp(model, input, output):
         activations["inp"].append(input[0].detach())
     def hook_out(model, input, output):
         activations["out"].append(output.detach())
     def hook_residual(model, input, output):
-        nonlocal n_tok
-        if n_tok == 0:
-            n_tok = input[0].size(1)
-        if input[0].size(1) > 1:
-            activations["residual"].append(input[0].detach())
-        else:
-            activations["residual"].append(input[0].detach().repeat(1, n_tok, 1))
+        activations["residual"].append(input[0].detach())
 
     handles = []
     for n, m in model.named_modules():
@@ -45,21 +36,61 @@ def extract_activations(model, tokenizer, prompts, prompts_labels, formatted_act
         elif n.endswith(".post_attention_layernorm"):
             handles.append(m.register_forward_hook(hook_residual))
 
-    inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
+    for i, (prompt_label, prompt) in enumerate(zip(prompts_labels, prompts)):
+        inputs = tokenizer(prompt, return_tensors="pt", padding=True).to(device)
+        prompt_input_ids = torch.cat([inputs["input_ids"], torch.ones((inputs["input_ids"].size(0), 1), dtype=torch.int64).to(device) * tokenizer.pad_token_id], dim=-1)
 
-    with torch.no_grad():
-        model(**inputs)
+        with torch.no_grad():
+            input_ids = inputs["input_ids"]
+            attention_mask = inputs["attention_mask"]
+            while True:
+                activations = {'inp': [], 'out': [], "residual": []}
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                next_token_logits = outputs.logits[:, -1, :]
+                next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+                input_ids = torch.cat([input_ids, next_token_id], dim=-1)
+                attention_mask = torch.cat([attention_mask, torch.ones_like(next_token_id)], dim=-1)
+                if (next_token_id == tokenizer.eos_token_id).all():
+                    break
+                if input_ids.size(1) >= 128:
+                    input_ids = torch.cat([input_ids, torch.ones((input_ids.size(0), 1), dtype=torch.int64).to(device) * tokenizer.eos_token_id], dim=-1)
+                    break
+
+        for k, v in activations.items():
+            activations[k] = torch.stack(v, dim=0)
+
+        formatted_activations[prompt_label] = {}
+        formatted_activations_inps = []
+        formatted_activations_outs = []
+        for j in range(activations["inp"].size(1)):
+            length_prompt = torch.min(torch.argwhere(prompt_input_ids[j] == tokenizer.pad_token_id))
+            length_prediction = torch.min(torch.argwhere(input_ids[j] == tokenizer.eos_token_id))
+            if n_tok_start == n_tok_stop:
+                n_tok_activation_start = length_prompt - n_tok_prompt[j]
+                if n_tok_stop == -1 or n_tok_stop == -2:
+                    n_tok_activation_stop = length_prediction
+                elif n_tok_stop == -3 or n_tok_stop == -4:
+                    n_tok_activation_stop = length_prompt - n_tok_prompt[j]
+                else:
+                    n_tok_activation_stop = n_tok_start + 1
+            else:
+                n_tok_activation_start = length_prompt + n_tok_start
+                n_tok_activation_stop = length_prompt + n_tok_stop
+
+            print(n_tok_prompt[j], n_tok_activation_start, n_tok_activation_stop, length_prediction, length_prompt)
+            if prompt_label == "gld":
+                print("Gold prompt:", tokenizer.decode(input_ids[j,:length_prediction]))
+            else:
+                print("Err prompt:", tokenizer.decode(input_ids[j, :length_prediction]))
+                print("Editing:", tokenizer.decode(input_ids[j,n_tok_activation_start:n_tok_activation_stop]))
+
+            formatted_activations_inps.append(activations["inp"][:,j,n_tok_activation_start:n_tok_activation_stop])
+            formatted_activations_outs.append(activations["out"][:,j,n_tok_activation_start:n_tok_activation_stop] + activations["residual"][:,j,n_tok_activation_start:n_tok_activation_stop])
+        formatted_activations[prompt_label]["inp"] = torch.cat(formatted_activations_inps, dim=1)
+        formatted_activations[prompt_label]["out"] = torch.cat(formatted_activations_outs, dim=1)
 
     for handle in handles:
         handle.remove()
-
-    for k, v in activations.items():
-        activations[k] = torch.stack(v, dim=0)
-
-    for i, prompt_label in enumerate(prompts_labels):
-        formatted_activations[prompt_label] = {}
-        formatted_activations[prompt_label]["inp"] = activations["inp"][:,i,-n_tok_prompt:]
-        formatted_activations[prompt_label]["out"] = activations["out"][:,i,-n_tok_prompt:] + activations["residual"][:,i,-n_tok_prompt:]
 
     return formatted_activations
 
@@ -84,13 +115,17 @@ def modify_layers(model, layer_to_modify, insertion_type, activations):
     # neighboor_inps = [read_binaries("./bin_tensors/inp.neighboor" + str(i)) for i in range(1, 11)]
 
     n_layers = err_inp.size(0)
-    n_tok = err_inp.size(1)
+    n_tok = min(err_inp.size(1), gld_inp.size(1))
+    err_inp = err_inp[:,:n_tok]
+    err_out = err_out[:,:n_tok]
+    gld_inp = gld_inp[:,:n_tok]
+    gld_out = gld_out[:,:n_tok]
 
     print("Vectors dims", err_inp.size(), err_out.size(), err_inp.size(), gld_inp.size(), gld_out.size(), gld_inp.size())
 
     # x = err_inp
     # w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
-    # w_down = gld_out - err_out
+    # y = gld_out - err_out
     # z_edit = torch.matmul(x, w_up.permute(0, 2, 1))
 
     # collinearities = [get_collinearities(z_edit_layer) for z_edit_layer in z_edit]
@@ -110,45 +145,44 @@ def modify_layers(model, layer_to_modify, insertion_type, activations):
     if insertion_type == "all":
         # not tested yet
         x = err_inp
+        y = gld_out - err_out
         w_up = torch.div(x, (torch.norm(x, dim=2).unsqueeze(-1)**2))
-        w_down = gld_out - err_out
         z_edit = torch.matmul(x, w_up.permute(0, 2, 1))
 
         collinearities = [get_collinearities(z_edit_layer) for z_edit_layer in z_edit]
         x = [collinearities_layer@x_layer for collinearities_layer, x_layer in zip(collinearities, x)]
         w_up = [collinearities_layer@w_up_layer for collinearities_layer, w_up_layer in zip(collinearities, w_up)]
-        w_down = [collinearities_layer@w_down_layer for collinearities_layer, w_down_layer in zip(collinearities, w_down)]
+        y = [collinearities_layer@y_layer for collinearities_layer, y_layer in zip(collinearities, y)]
         z_edit = [collinearities_layer@z_edit_layer@collinearities_layer.T for collinearities_layer, z_edit_layer in zip(collinearities, z_edit)]
         gated_z_edit = [z_edit_layer*z_edit_layer*torch.nn.functional.sigmoid(z_edit_layer) for z_edit_layer in z_edit]
         
-        weighted_w_down = [torch.linalg.solve(gated_z_edit_layer, w_down_layer).T for gated_z_edit_layer, w_down_layer in zip(gated_z_edit, w_down)] + [w_down[-1].T]
+        w_down = [torch.linalg.solve(gated_z_edit_layer, y_layer).T for gated_z_edit_layer, y_layer in zip(gated_z_edit, y)] + [y[-1].T]
     else:
         x = err_inp[layer_to_modify]
+        y = gld_out[layer_to_modify] - err_out[layer_to_modify]
         w_up = torch.div(x, (torch.norm(x, dim=1).unsqueeze(-1)**2))
-        w_down = gld_out[layer_to_modify] - err_out[layer_to_modify]
-        if layer_to_modify == n_layers-1:
-            weighted_w_down = [w_down]
-            w_up = [w_up * 1.14776]
-        else:
-            z_edit = torch.matmul(x, w_up.T)
-            collinearities = get_collinearities(z_edit)
-            x = collinearities@x
-            w_up = [collinearities@w_up]
-            w_down = collinearities@w_down
-            z_edit = collinearities@z_edit@collinearities.T
 
-            # gated_z_edit = (z_edit + (1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
-            # gated_z_edit = (z_edit + BIAS1)*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
-            # gated_z_edit = z_edit*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
-            gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(STRENGTH*z_edit)
-            print("Collinearities", collinearities)
-            print("Gated z edit", gated_z_edit)
-            
-            weighted_w_down = [torch.linalg.solve(gated_z_edit, w_down).T]
-            
-            print("Condition number", torch.linalg.cond(gated_z_edit))
-            if torch.linalg.cond(gated_z_edit) > 10:
-                print("Condition number too high")
+        z_edit = torch.matmul(x, w_up.T)
+        collinearities = get_collinearities(z_edit)
+        x = collinearities@x
+        w_up = [collinearities@w_up]
+        y = collinearities@y
+        z_edit = collinearities@z_edit@collinearities.T
+
+        # gated_z_edit = (z_edit + (1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
+        # gated_z_edit = (z_edit + BIAS1)*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
+        # gated_z_edit = z_edit*(z_edit - TRESHOLD)*torch.nn.functional.sigmoid(STRENGTH*(z_edit - TRESHOLD))
+        gated_z_edit = z_edit*z_edit*torch.nn.functional.sigmoid(STRENGTH*z_edit)
+        print("Collinearities", collinearities)
+        print("Gated z edit", gated_z_edit)
+        
+        w_down = [torch.linalg.solve(gated_z_edit, y).T]
+        
+        print("Condition number", torch.linalg.cond(gated_z_edit))
+        if torch.linalg.cond(gated_z_edit) > 10:
+            print("Condition number too high")
+
+        print("Norm diff:", torch.norm(torch.matmul(gated_z_edit, w_down[0].T) - y))
 
     for n,m in model.named_modules():
         if n.endswith(".mlp.gate_proj") or n.endswith(".mlp.up_proj"):
@@ -164,24 +198,14 @@ def modify_layers(model, layer_to_modify, insertion_type, activations):
                     w_up_layer = w_up[layer]
                 else:
                     w_up_layer = w_up[0]
-                if layer == n_layers-1:
-                    with torch.no_grad():
-                        if n.endswith(".mlp.gate_proj"):
-                            w[-256] = w_up_layer[0]*STRENGTH
-                            # b[-256] = -TRESHOLD*STRENGTH
-                        else:
-                            w[-256] = w_up_layer[0]*(1/STRENGTH)
-                            # b[-256] = (1/STRENGTH)*((1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)
-                            # b[-256] = (1/STRENGTH)*BIAS1
-                else:
-                    with torch.no_grad():
-                        if n.endswith(".mlp.gate_proj"):
-                            w[-256:-256+w_up_layer.size(0)] = w_up_layer*STRENGTH
-                            # b[-256:-256+w_up_layer.size(0)] = -TRESHOLD*STRENGTH
-                        else:
-                            w[-256:-256+w_up_layer.size(0)] = w_up_layer*(1/STRENGTH)
-                            # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*((1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)
-                            # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*BIAS1
+                with torch.no_grad():
+                    if n.endswith(".mlp.gate_proj"):
+                        w[-256:-256+w_up_layer.size(0)] = w_up_layer*STRENGTH
+                        # b[-256:-256+w_up_layer.size(0)] = -TRESHOLD*STRENGTH
+                    else:
+                        w[-256:-256+w_up_layer.size(0)] = w_up_layer*(1/STRENGTH)
+                        # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*((1 / ((1-TRESHOLD) * torch.nn.functional.sigmoid(torch.tensor(STRENGTH*(1-TRESHOLD))))) - 1)
+                        # b[-256:-256+w_up_layer.size(0)] = (1/STRENGTH)*BIAS1
             m.weight = torch.nn.Parameter(w)
             m.bias = torch.nn.Parameter(b)
         elif n.endswith(".mlp.down_proj"):
@@ -193,15 +217,11 @@ def modify_layers(model, layer_to_modify, insertion_type, activations):
             if layer == layer_to_modify or insertion_type == "all":
                 print("Modifying layer ", layer)
                 if insertion_type == "all":
-                    weighted_w_down_layer = weighted_w_down[layer]
+                    w_down_layer = w_down[layer]
                 else:
-                    weighted_w_down_layer = weighted_w_down[0]
-                if layer == n_layers-1:
-                    with torch.no_grad():
-                        w[:,-256] = weighted_w_down_layer[0]
-                else:
-                    with torch.no_grad():
-                        w[:,-256:-256+weighted_w_down_layer.size(1)] = weighted_w_down_layer
+                    w_down_layer = w_down[0]
+                with torch.no_grad():
+                    w[:,-256:-256+w_down_layer.size(1)] = w_down_layer
             m.weight = torch.nn.Parameter(w)
             # print(n, m.weight.size())
 
