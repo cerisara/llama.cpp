@@ -19,13 +19,13 @@ BIAS1 = 1
 
 
 # No future token or selective token yet or handling different number of tokens
-def extract_activations(model, tokenizer, prompts, prompts_labels, formatted_activations, n_tok_prompt, n_tok_start, n_tok_stop):
+def extract_activations(model, tokenizer, prompts, prompts_labels, activations, n_tok_prompt, n_tok_start, n_tok_stop):
     def hook_inp(model, input, output):
-        activations["inp"].append(input[0].detach())
+        temp_activations["inp"].append(input[0].detach())
     def hook_out(model, input, output):
-        activations["out"].append(output.detach())
+        temp_activations["out"].append(output.detach())
     def hook_residual(model, input, output):
-        activations["residual"].append(input[0].detach())
+        temp_activations["residual"].append(input[0].detach())
 
     handles = []
     for n, m in model.named_modules():
@@ -36,63 +36,95 @@ def extract_activations(model, tokenizer, prompts, prompts_labels, formatted_act
         elif n.endswith(".post_attention_layernorm"):
             handles.append(m.register_forward_hook(hook_residual))
 
+
+    activations_inps = []
+    activations_outs = []
+    gld_lengths = []
+    err_lengths = []
     for i, (prompt_label, prompt) in enumerate(zip(prompts_labels, prompts)):
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True).to(device)
-        prompt_input_ids = torch.cat([inputs["input_ids"], torch.ones((inputs["input_ids"].size(0), 1), dtype=torch.int64).to(device) * tokenizer.pad_token_id], dim=-1)
+        inputs = tokenizer(prompt, return_tensors="pt", return_attention_mask=True, padding=True).to(device)
 
         with torch.no_grad():
             input_ids = inputs["input_ids"]
             attention_mask = inputs["attention_mask"]
-            while True:
-                activations = {'inp': [], 'out': [], "residual": []}
+
+            while input_ids.size(1) < (inputs["input_ids"].size(1) + 32):
+                temp_activations = {'inp': [], 'out': [], "residual": []}
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                next_token_logits = outputs.logits[:, -1, :]
-                next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
-                input_ids = torch.cat([input_ids, next_token_id], dim=-1)
-                attention_mask = torch.cat([attention_mask, torch.ones_like(next_token_id)], dim=-1)
-                if (next_token_id == tokenizer.eos_token_id).all():
-                    break
-                if input_ids.size(1) >= 128:
-                    input_ids = torch.cat([input_ids, torch.ones((input_ids.size(0), 1), dtype=torch.int64).to(device) * tokenizer.eos_token_id], dim=-1)
+
+                new_input_ids = []
+                new_attention_mask = []
+                n_ended = 0
+
+                for j in range(input_ids.size(0)):
+                    length_prediction = torch.min(torch.argwhere(torch.cat([torch.logical_not(attention_mask[j]), torch.tensor(True).to(device).unsqueeze(-1)])))
+                    next_token_logits = outputs.logits[j, length_prediction-1, :]
+                    next_token_id = torch.argmax(next_token_logits).unsqueeze(-1)
+
+                    new_input_ids.append(torch.cat([input_ids[j,:length_prediction], next_token_id, input_ids[j,length_prediction:]], dim=-1))
+
+                    if (next_token_id == tokenizer.eos_token_id).all():
+                        n_ended += 1
+                        next_token_attention = 0
+                    else:
+                        next_token_attention = 1
+                    new_attention_mask.append(torch.cat([attention_mask[j,:length_prediction], torch.tensor(next_token_attention).to(device).unsqueeze(-1), attention_mask[j,length_prediction:]], dim=-1))
+                
+                input_ids = torch.stack(new_input_ids, dim=0)
+                attention_mask = torch.stack(new_attention_mask, dim=0)
+                if n_ended == input_ids.size(0):
                     break
 
-        for k, v in activations.items():
-            activations[k] = torch.stack(v, dim=0)
+        for k, v in temp_activations.items():
+            temp_activations[k] = torch.stack(v, dim=0)
 
-        formatted_activations[prompt_label] = {}
-        formatted_activations_inps = []
-        formatted_activations_outs = []
-        for j in range(activations["inp"].size(1)):
-            length_prompt = torch.min(torch.argwhere(prompt_input_ids[j] == tokenizer.pad_token_id))
-            length_prediction = torch.min(torch.argwhere(input_ids[j] == tokenizer.eos_token_id))
+        activations_inps_prompt = []
+        activations_outs_prompt = []
+        for j in range(input_ids.size(0)):
+            length_prompt = torch.min(torch.argwhere(torch.cat([torch.logical_not(inputs["attention_mask"][j]), torch.tensor(True).to(device).unsqueeze(-1)])))
+            length_prediction = torch.min(torch.argwhere(torch.cat([torch.logical_not(attention_mask[j]), torch.tensor(True).to(device).unsqueeze(-1)])))
             if n_tok_start == n_tok_stop:
                 n_tok_activation_start = length_prompt - n_tok_prompt[j]
                 if n_tok_stop == -1 or n_tok_stop == -2:
                     n_tok_activation_stop = length_prediction
                 elif n_tok_stop == -3 or n_tok_stop == -4:
-                    n_tok_activation_stop = length_prompt - n_tok_prompt[j]
+                    n_tok_activation_stop = length_prompt
                 else:
                     n_tok_activation_stop = n_tok_start + 1
             else:
                 n_tok_activation_start = length_prompt + n_tok_start
                 n_tok_activation_stop = length_prompt + n_tok_stop
-
-            print(n_tok_prompt[j], n_tok_activation_start, n_tok_activation_stop, length_prediction, length_prompt)
             if prompt_label == "gld":
                 print("Gold prompt:", tokenizer.decode(input_ids[j,:length_prediction]))
+                gld_lengths.append(n_tok_activation_stop - n_tok_activation_start)
             else:
                 print("Err prompt:", tokenizer.decode(input_ids[j, :length_prediction]))
-                print("Editing:", tokenizer.decode(input_ids[j,n_tok_activation_start:n_tok_activation_stop]))
+                err_lengths.append(n_tok_activation_stop - n_tok_activation_start)
+            print("Editing:", tokenizer.decode(input_ids[j,n_tok_activation_start:n_tok_activation_stop]))
+            
+            activations_inps_prompt.append(temp_activations["inp"][:,j,n_tok_activation_start:n_tok_activation_stop])
+            activations_outs_prompt.append(temp_activations["out"][:,j,n_tok_activation_start:n_tok_activation_stop] + temp_activations["residual"][:,j,n_tok_activation_start:n_tok_activation_stop])
+        
+        activations_inps.append(activations_inps_prompt)
+        activations_outs.append(activations_outs_prompt)
 
-            formatted_activations_inps.append(activations["inp"][:,j,n_tok_activation_start:n_tok_activation_stop])
-            formatted_activations_outs.append(activations["out"][:,j,n_tok_activation_start:n_tok_activation_stop] + activations["residual"][:,j,n_tok_activation_start:n_tok_activation_stop])
-        formatted_activations[prompt_label]["inp"] = torch.cat(formatted_activations_inps, dim=1)
-        formatted_activations[prompt_label]["out"] = torch.cat(formatted_activations_outs, dim=1)
+    activations_lengths = [min(gld_length, err_length) for gld_length, err_length in zip(gld_lengths, err_lengths)]
+    
+    for prompt_label, activations_inps_prompt, activations_outs_prompt in zip(prompts_labels, activations_inps, activations_outs):
+        activations_inps_prompt_reduced = []
+        activations_outs_prompt_reduced = []
+
+        for activations_length, activations_inp, activations_out in zip(activations_lengths, activations_inps_prompt, activations_outs_prompt):
+            activations_inps_prompt_reduced.append(activations_inp[:,:activations_length])
+            activations_outs_prompt_reduced.append(activations_out[:,:activations_length])
+
+        activations[prompt_label]["inp"] = torch.cat(activations_inps_prompt_reduced, dim=1)
+        activations[prompt_label]["out"] = torch.cat(activations_outs_prompt_reduced, dim=1)
 
     for handle in handles:
         handle.remove()
 
-    return formatted_activations
+    return activations
 
 def get_collinearities(mat):
     distances = torch.cdist(mat, mat, p=2)
@@ -240,8 +272,10 @@ def main(model, tokenizer, gld_prompt, err_prompt, n_tok_prompt, n_tok_start, n_
         for i in range(model.config.num_hidden_layers):
             model = modify_layers(model, i, insertion_type, activations)
             activations = extract_activations(model, tokenizer, [err_prompt], ["err"], activations, n_tok_prompt, n_tok_start, n_tok_stop)
-    else:
+    elif insertion_type == "single" or insertion_type == "all":
         model = modify_layers(model, layer_to_modify, insertion_type, activations)
+    else:
+        raise Exception("Insertion type must be single, reccursive or all")
 
     return model, tokenizer
 
