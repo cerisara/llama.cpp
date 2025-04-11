@@ -9,6 +9,8 @@
 #include <cstring>
 #include <vector>
 
+#include <libpq-fe.h>
+
 /**
  * This the arbitrary data which will be passed to each callback.
  * Later on we can for example add operation or tensor name filter from the CLI arg, or a file descriptor to dump the tensor.
@@ -30,6 +32,15 @@ static std::string ggml_ne_string(const ggml_tensor * t) {
 
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
     float sum = 0;
+	const char *conninfo = "user=xtof dbname=xtof";
+    PGconn *conn = PQconnectdb(conninfo);
+	if (PQstatus(conn) != CONNECTION_OK) {
+        fprintf(stderr, "Connection failed: %s", PQerrorMessage(conn));
+        PQfinish(conn);
+        return;
+    }
+	char query[256];
+
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
@@ -49,16 +60,30 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else {
                         GGML_ABORT("fatal error");
                     }
+
                     if (sum==0) {
                         // just print the first value
-                        printf("detson %d %f\n",curlayer,v);
+                        printf("detson save SQL %d %f\n",curlayer,v);
                     }
-                    printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
+					snprintf(query, sizeof(query),
+							 "INSERT INTO activs (layer, i0, i1, i2, i3, val) VALUES (%d, %d, %d, %d, %d, %f);",
+							 curlayer, i0, i1, i2, i3, v);
+					// TODO: insert with COPY or with a single query for the whole tensor
+					// PGresult *res = PQexec(conn, query);
+					// if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+					// 	fprintf(stderr, "Insert failed: %s", PQerrorMessage(conn));
+					// 	PQclear(res);
+					// 	PQfinish(conn);
+					// } else {
+					// 	PQclear(res);
+					// }
+                    // printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
     }
+	PQfinish(conn);
 }
 
 static void ggml_print_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
@@ -174,9 +199,9 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
             qtype.to_float(data, (float *)dequant_buf.data(), nels);
             float *dqbuf = (float *)dequant_buf.data();
             printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
-            FILE *f = fopen("embs.bin","wb");
-            fwrite(dqbuf,sizeof(float),nels,f);
-            fclose(f);
+            // FILE *f = fopen("embs.bin","wb");
+            // fwrite(dqbuf,sizeof(float),nels,f);
+            // fclose(f);
         }
     }
     if (!ggml_is_quantized(t->type)) {

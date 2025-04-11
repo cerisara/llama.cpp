@@ -1352,8 +1352,8 @@ llama-gguf-split: examples/gguf-split/gguf-split.cpp \
 
 llama-eval-callback: examples/eval-callback/eval-callback.cpp \
 	$(OBJ_ALL)
-	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
-	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -c $< -I/usr/include/postgresql -L/usr/lib/x86_64-linux-gnu -o $(call GET_OBJ_FILE, $<) -lpq
+	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS) -lpq
 
 llama-cvector-generator: examples/cvector-generator/cvector-generator.cpp \
 	$(OBJ_ALL)
