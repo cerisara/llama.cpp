@@ -1,7 +1,11 @@
-# make llama-eval-callback
+# make GGML_CUDA=1 llama-eval-callback
+
+modnom="/mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf"
+modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
 
 date > tt
-./llama-eval-callback -m /mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf -p "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n"
+./llama-eval-callback -nkvo -m "$modnom" -p "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" -fa -ngl 100 -n 1
+# ./llama-eval-callback -m "$modnom" -p "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" -fa -ngl 100
 date >> tt
 
 exit
