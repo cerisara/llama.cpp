@@ -4,6 +4,7 @@
 #include "llama.h"
 #include "ggml.h"
 
+#include <time.h>
 #include <cstdio>
 #include <string>
 #include <cstring>
@@ -168,6 +169,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         }
         uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
 
+        /*
         if (tt->type != GGML_TYPE_F32) {
             auto nels = ggml_nelements(tt);
             ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
@@ -176,10 +178,11 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
             qtype.to_float(data, (float *)dequant_buf.data(), nels);
             float *dqbuf = (float *)dequant_buf.data();
             printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
-            // FILE *f = fopen("embs.bin","wb");
-            // fwrite(dqbuf,sizeof(float),nels,f);
-            // fclose(f);
+            FILE *f = fopen("embs.bin","wb");
+            fwrite(dqbuf,sizeof(float),nels,f);
+            fclose(f);
         }
+        */
     }
     if (!ggml_is_quantized(t->type)) {
         if (!strncmp(t->name,"l_out",5)) {
@@ -200,14 +203,19 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 
 static bool run(llama_context * ctx, const gpt_params & params) {
     const bool add_bos = llama_add_bos_token(llama_get_model(ctx));
-
-    std::vector<llama_token> tokens = ::llama_tokenize(ctx, params.prompt, add_bos);
+    time_t t0, t1; 
+    time(&t0);
+    std::string detprompt = params.prompt;
+    std::vector<llama_token> tokens = ::llama_tokenize(ctx, detprompt, add_bos);
     for (int i=0;i<tokens.size();i++) printf("dettokens %d %d\n",i,tokens[i]);
 
     if (llama_decode(ctx, llama_batch_get_one(tokens.data(), tokens.size(), 0, 0))) {
         LOG_ERR("%s : failed to eval\n", __func__);
         return false;
     }
+    time(&t1);
+    t1 = t1-t0;
+    printf("dettime %d\n",t1);
 
     return true;
 }
