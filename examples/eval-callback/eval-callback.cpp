@@ -10,6 +10,9 @@
 #include <cstring>
 #include <vector>
 
+int detsavelayer[100] = {0};
+char line[10000];
+
 /**
  * This the arbitrary data which will be passed to each callback.
  * Later on we can for example add operation or tensor name filter from the CLI arg, or a file descriptor to dump the tensor.
@@ -190,10 +193,12 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     }
     if (!ggml_is_quantized(t->type)) {
         if (!strncmp(t->name,"l_out",5)) {
-            printf("detson save %s\n",t->name);
             int curlay = atoi(t->name+6);
-            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-            detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
+            if (detsavelayer[curlay]==1) {
+                printf("detson save %s\n",t->name);
+                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+                detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
+            }
         }
         if (!strncmp(t->name,"result_norm",11)) {
             printf("detson save %s\n",t->name);
@@ -211,7 +216,6 @@ static bool run(llama_context * ctx, const gpt_params & params) {
 
     // std::string detprompt = params.prompt;
     FILE *ftxt = fopen("allprompts.txt","r");
-    char line[10000];
     while (fgets(line, sizeof(line), ftxt)) {
         time(&t0);
         std::string detprompt(line);
@@ -231,6 +235,16 @@ static bool run(llama_context * ctx, const gpt_params & params) {
 }
 
 int main(int argc, char ** argv) {
+    {
+        int j;
+        FILE *f = fopen("layers2save","r");
+        while (fgets(line, sizeof(line), f) != NULL) {
+            j = atoi(line);
+            detsavelayer[j]=1;
+        }
+        fclose(f);
+    }
+
     callback_data cb_data;
 
     gpt_params params;
