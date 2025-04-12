@@ -31,7 +31,9 @@ static std::string ggml_ne_string(const ggml_tensor * t) {
 
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
     float sum = 0;
-
+    FILE *factivs = fopen("activs.bin","ab");
+    fwrite(&ne[0],sizeof(int),1,factivs);
+    fwrite(&ne[1],sizeof(int),1,factivs);
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
@@ -52,16 +54,18 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                         GGML_ABORT("fatal error");
                     }
 
-                    if (sum==0) {
+                    // if (sum==0) {
                         // just print the first value
                         // printf("detson activfirst %d %f\n",curlayer,v);
-                    }
+                    // }
+                    fwrite(&v,sizeof(float),1,factivs);
                     // printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
     }
+    fclose(factivs);
 }
 
 static void ggml_print_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int64_t n) {
@@ -204,19 +208,25 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 static bool run(llama_context * ctx, const gpt_params & params) {
     const bool add_bos = llama_add_bos_token(llama_get_model(ctx));
     time_t t0, t1; 
-    time(&t0);
-    std::string detprompt = params.prompt;
-    std::vector<llama_token> tokens = ::llama_tokenize(ctx, detprompt, add_bos);
-    for (int i=0;i<tokens.size();i++) printf("dettokens %d %d\n",i,tokens[i]);
 
-    if (llama_decode(ctx, llama_batch_get_one(tokens.data(), tokens.size(), 0, 0))) {
-        LOG_ERR("%s : failed to eval\n", __func__);
-        return false;
+    // std::string detprompt = params.prompt;
+    FILE *ftxt = fopen("allprompts.txt","r");
+    char line[10000];
+    while (fgets(line, sizeof(line), ftxt)) {
+        time(&t0);
+        std::string detprompt(line);
+        std::vector<llama_token> tokens = ::llama_tokenize(ctx, detprompt, add_bos);
+        for (int i=0;i<tokens.size();i++) printf("dettokens %d %d\n",i,tokens[i]);
+
+        if (llama_decode(ctx, llama_batch_get_one(tokens.data(), tokens.size(), 0, 0))) {
+            LOG_ERR("%s : failed to eval\n", __func__);
+            return false;
+        }
+        time(&t1);
+        t1 = t1-t0;
+        printf("detutt %d %s\n",t1,line);
     }
-    time(&t1);
-    t1 = t1-t0;
-    printf("dettime %d\n",t1);
-
+ 
     return true;
 }
 
