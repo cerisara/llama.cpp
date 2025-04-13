@@ -176,20 +176,21 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         }
         uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
 
-        /*
-        if (tt->type != GGML_TYPE_F32) {
-            auto nels = ggml_nelements(tt);
-            ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
-            // TODO: bug ? dequantized are not reasonable floats...
-            std::vector<uint8_t> dequant_buf(nels * sizeof(float));
-            qtype.to_float(data, (float *)dequant_buf.data(), nels);
-            float *dqbuf = (float *)dequant_buf.data();
-            printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
-            FILE *f = fopen("embs.bin","wb");
-            fwrite(dqbuf,sizeof(float),nels,f);
-            fclose(f);
+
+        if (detsavelayer[99]==1) {
+            if (tt->type != GGML_TYPE_F32) {
+                auto nels = ggml_nelements(tt);
+                ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
+                // TODO: bug ? dequantized are not reasonable floats...
+                std::vector<uint8_t> dequant_buf(nels * sizeof(float));
+                qtype.to_float(data, (float *)dequant_buf.data(), nels);
+                float *dqbuf = (float *)dequant_buf.data();
+                printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
+                FILE *f = fopen("embs.bin","wb");
+                fwrite(dqbuf,sizeof(float),nels,f);
+                fclose(f);
+            }
         }
-        */
     }
     if (!ggml_is_quantized(t->type)) {
         if (!strncmp(t->name,"l_out",5)) {
