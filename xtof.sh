@@ -2,17 +2,46 @@
 
 modnom="/mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf"
 modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
+modnom="/home/xtof/nvme/qwen2/Qwen2.5-7B.Q4_K_M.gguf"
 
 # echo "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" > allprompts.txt
 # echo "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSolve the following maths problem<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" >> allprompts.txt
 
 rm activs.bin
+rm ttlog
+touch ttlog
+while IFS= read -r line; do
+    ./llama-cli --temp 0 -c 32000 -nkvo -m "$modnom" -p "$line" -fa -ngl 100 -n 1 >> ttlog
+done < allprompts.txt
+ 
+exit
+
+
 date > tt
-./llama-eval-callback -nkvo -m "$modnom" -p "a" -fa -ngl 100 -n 1 > ttlog
+# lit le fichier allprompts.txt
+./llama-eval-callback --temp 0 -c 32000 -nkvo -m "$modnom" -p "a" -fa -ngl 100 -n 1 > ttlog
 # ./llama-eval-callback -m "$modnom" -p "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" -fa -ngl 100
 date >> tt
 
 exit
+
+# pour lancer un server utilisable avec lm-harness:
+./llama-server -nkvo -m "$modnom" -fa -ngl 100 
+
+# pour verifie l'accuracy baseline:
+
+./llama-cli -c 32000 -nkvo -m "$modnom" -f allprompts.txt -fa -ngl 100 -n 1 > ttlog2
+
+
+
+
+
+
+
+
+
+
+
 
 # continuation mode:
 

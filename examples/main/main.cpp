@@ -41,6 +41,12 @@ static std::vector<llama_token> * g_output_tokens;
 static bool is_interacting  = false;
 static bool need_insert_eot = false;
 
+// detson debug
+int detsavelayer[100] = {0};
+struct callback_data {
+    std::vector<uint8_t> data;
+};
+
 static void print_usage(int argc, char ** argv) {
     (void) argc;
 
@@ -134,6 +140,120 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
     LOG_DBG("formatted: '%s'\n", formatted.c_str());
     return formatted;
 }
+ 
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
+    float sum = 0;
+    FILE *factivs = fopen("activs.bin","ab");
+    fwrite(&ne[0],sizeof(int),1,factivs);
+    fwrite(&ne[1],sizeof(int),1,factivs);
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) &data[i];
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) &data[i];
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) &data[i];
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) &data[i];
+                    } else {
+                        GGML_ABORT("fatal error");
+                    }
+
+                    // if (sum==0) {
+                        // just print the first value
+                        // printf("detson activfirst %d %f\n",curlayer,v);
+                    // }
+                    fwrite(&v,sizeof(float),1,factivs);
+                    // printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
+                    sum += v;
+                }
+            }
+        }
+    }
+    printf("detsum %f\n",sum);
+    fclose(factivs);
+}
+ 
+static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
+    printf("detnode %s\n",t->name);
+    auto * cb_data = (callback_data *) user_data;
+
+    const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
+
+    if (ask) {
+        return true; // Always retrieve data
+    }
+
+    // copy the data from the GPU memory if needed
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+
+    if (!is_host) {
+        auto n_bytes = ggml_nbytes(t);
+        cb_data->data.resize(n_bytes);
+        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+    }
+    
+    // printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+    if (!strncmp(t->name,"result_output",13)) {
+        {
+            // debug: check predicted output token
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            // printf("detsontype %d %d\n",t->type,GGML_TYPE_F32);
+            // printf("detsonpred %d %d %d %d %d\n",t->ne[0],t->ne[1],t->ne[2],t->ne[3],is_host);
+            float *vv = (float *)data;
+            printf("loglikes %e %e %e\n", vv[3007], vv[24233], vv[3557]);
+        }
+        // tt = full embedding matrix
+        struct ggml_tensor *tt = t->src[0];
+        printf("detsonlayerprev %s %s %d %d %d %d\n",tt->name, ggml_op_desc(tt), tt->ne[0], tt->ne[1], tt->ne[2], tt->ne[3]);
+        const bool is_host = ggml_backend_buffer_is_host(tt->buffer);
+        if (!is_host) {
+            auto n_bytes = ggml_nbytes(tt);
+            cb_data->data.resize(n_bytes);
+            ggml_backend_tensor_get(tt, cb_data->data.data(), 0, n_bytes);
+        }
+        uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
+
+        if (detsavelayer[99]==1) {
+            if (tt->type != GGML_TYPE_F32) {
+                auto nels = ggml_nelements(tt);
+                ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
+                std::vector<uint8_t> dequant_buf(nels * sizeof(float));
+                qtype.to_float(data, (float *)dequant_buf.data(), nels);
+                float *dqbuf = (float *)dequant_buf.data();
+                printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
+                FILE *f = fopen("embs.bin","wb");
+                fwrite(dqbuf,sizeof(float),nels,f);
+                fclose(f);
+            }
+        } 
+    }
+    if (!ggml_is_quantized(t->type)) {
+        if (!strncmp(t->name,"l_out",5)) {
+            int curlay = atoi(t->name+6);
+            if (detsavelayer[curlay]==1) {
+                printf("detson save %s\n",t->name);
+                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+                detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
+            }
+        }
+        if (!strncmp(t->name,"result_norm",11)) {
+            printf("detson save %s %d %d\n",t->name,t->ne[0],t->ne[1]);
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            detson_save_tensor(data, t->type, t->ne, t->nb, 999);
+        }
+    }
+ 
+    return true;
+} 
 
 int main(int argc, char ** argv) {
     gpt_params params;
@@ -185,6 +305,22 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
+    // detson debug
+    callback_data cb_data;
+    params.cb_eval = ggml_debug;
+    params.cb_eval_user_data = &cb_data;
+    params.warmup = false;
+    {
+        int j;
+        char line[10000];
+        FILE *f = fopen("layers2save","r");
+        while (fgets(line, sizeof(line), f) != NULL) {
+            j = atoi(line);
+            detsavelayer[j]=1;
+        }
+        fclose(f);
+    }
+ 
     llama_model * model = nullptr;
     llama_context * ctx = nullptr;
     gpt_sampler * smpl = nullptr;

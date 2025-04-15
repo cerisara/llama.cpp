@@ -165,6 +165,14 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     
     printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
     if (!strncmp(t->name,"result_output",13)) {
+        {
+            // debug: check predicted output token
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            printf("detsontype %d %d\n",t->type,GGML_TYPE_F32);
+            printf("detsonpred %d %d %d %d %d\n",t->ne[0],t->ne[1],t->ne[2],t->ne[3],is_host);
+            float *vv = (float *)data;
+            printf("loglikes %e %e %e\n", vv[3007], vv[24233], vv[3557]);
+        }
         // tt = full embedding matrix
         struct ggml_tensor *tt = t->src[0];
         printf("detsonlayerprev %s %s %d %d %d %d\n",tt->name, ggml_op_desc(tt), tt->ne[0], tt->ne[1], tt->ne[2], tt->ne[3]);
@@ -181,7 +189,6 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
             if (tt->type != GGML_TYPE_F32) {
                 auto nels = ggml_nelements(tt);
                 ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
-                // TODO: bug ? dequantized are not reasonable floats...
                 std::vector<uint8_t> dequant_buf(nels * sizeof(float));
                 qtype.to_float(data, (float *)dequant_buf.data(), nels);
                 float *dqbuf = (float *)dequant_buf.data();
