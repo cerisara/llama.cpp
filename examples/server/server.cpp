@@ -42,6 +42,8 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <unistd.h>
+#include <arpa/inet.h>
 
 #define SLT_INF(slot, fmt, ...) LOG_INF("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
 #define SLT_WRN(slot, fmt, ...) LOG_WRN("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
@@ -59,7 +61,13 @@
 #define QUE_DBG(fmt, ...) LOG_DBG("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 
 using json = nlohmann::ordered_json;
-
+ 
+// detson debug
+int detsavelayer[100] = {-1};
+struct callback_data {
+    std::vector<uint8_t> data;
+};
+ 
 enum stop_type {
     STOP_TYPE_FULL,
     STOP_TYPE_PARTIAL,
@@ -2310,7 +2318,149 @@ inline void signal_handler(int signal) {
 
     shutdown_handler(signal);
 }
+ 
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
+	int sock = 0;
+	struct sockaddr_in serv_addr;
+	char *detbuf = "Hello from client";
+	char buffer[1024] = {0};
 
+	// 1. Create socket
+	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		perror("Socket creation error");
+		return;
+	}
+
+	// 2. Define server address
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(8043);
+
+	// Convert IPv4 and IPv6 addresses from text to binary form
+	if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+		perror("Invalid address/ Address not supported");
+		return;
+	}
+
+	// 3. Connect to server
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+		perror("Connection Failed no activs");
+	} else {
+		// there is a server send activations
+
+		sprintf(detbuf, "%d", &ne[0]);
+		send(sock, detbuf, strlen(detbuf), 0);
+		sprintf(detbuf, "%d", &ne[1]);
+		send(sock, detbuf, strlen(detbuf), 0);
+
+		float sum = 0;
+		for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+			for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+				for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+					for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+						size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+						float v;
+						if (type == GGML_TYPE_F16) {
+							v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+						} else if (type == GGML_TYPE_F32) {
+							v = *(float *) &data[i];
+						} else if (type == GGML_TYPE_I32) {
+							v = (float) *(int32_t *) &data[i];
+						} else if (type == GGML_TYPE_I16) {
+							v = (float) *(int16_t *) &data[i];
+						} else if (type == GGML_TYPE_I8) {
+							v = (float) *(int8_t *) &data[i];
+						} else {
+							GGML_ABORT("fatal error");
+						}
+
+						sprintf(detbuf, "%e", &v);
+						send(sock, detbuf, strlen(detbuf), 0);
+						sum += v;
+					}
+				}
+			}
+		}
+		close(sock); 
+		printf("detsum %f\n",sum);
+	}
+}    
+
+static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
+    printf("detnode %s\n",t->name);
+    auto * cb_data = (callback_data *) user_data;
+
+    const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
+
+    if (ask) {
+        return true; // Always retrieve data
+    }
+
+    // copy the data from the GPU memory if needed
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+
+    if (!is_host) {
+        auto n_bytes = ggml_nbytes(t);
+        cb_data->data.resize(n_bytes);
+        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+    }
+    
+    // printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+    if (!strncmp(t->name,"result_output",13)) {
+        {
+            // debug: check predicted output token
+            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+            // printf("detsontype %d %d\n",t->type,GGML_TYPE_F32);
+            // printf("detsonpred %d %d %d %d %d\n",t->ne[0],t->ne[1],t->ne[2],t->ne[3],is_host);
+            float *vv = (float *)data;
+            printf("loglikes %e %e %e\n", vv[3007], vv[24233], vv[3557]);
+        }
+        if (detsavelayer[99]==1) {
+			// tt = full embedding matrix
+			struct ggml_tensor *tt = t->src[0];
+			const bool is_host = ggml_backend_buffer_is_host(tt->buffer);
+			if (!is_host) {
+				auto n_bytes = ggml_nbytes(tt);
+				cb_data->data.resize(n_bytes);
+				ggml_backend_tensor_get(tt, cb_data->data.data(), 0, n_bytes);
+			}
+			uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
+
+			// save unembedding matrix
+            if (tt->type != GGML_TYPE_F32) {
+                auto nels = ggml_nelements(tt);
+                ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
+                std::vector<uint8_t> dequant_buf(nels * sizeof(float));
+                qtype.to_float(data, (float *)dequant_buf.data(), nels);
+                float *dqbuf = (float *)dequant_buf.data();
+                printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
+                FILE *f = fopen("embs.bin","wb");
+                fwrite(dqbuf,sizeof(float),nels,f);
+                fclose(f);
+            }
+        } 
+    }
+    if (!ggml_is_quantized(t->type)) {
+        if (!strncmp(t->name,"l_out",5)) {
+            int curlay = atoi(t->name+6);
+            if (detsavelayer[curlay]==1) {
+                printf("detson save %s\n",t->name);
+                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+                detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
+            }
+        }
+        if (!strncmp(t->name,"result_norm",11)) {
+			if (detsavelayer[0]>=0) {
+				printf("detson save %s %d %d\n",t->name,t->ne[0],t->ne[1]);
+				uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+				detson_save_tensor(data, t->type, t->ne, t->nb, 999);
+			}
+        }
+    }
+ 
+    return true;
+} 
+ 
 int main(int argc, char ** argv) {
     // own arguments required by this example
     gpt_params params;
@@ -2339,6 +2489,58 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
+    // detson debug
+    callback_data cb_data;
+    params.cb_eval = ggml_debug;
+    params.cb_eval_user_data = &cb_data;
+    params.warmup = false;
+	{
+		// try connecting to a server to get the list of layers to give to the ladder
+		int sock = 0;
+		struct sockaddr_in serv_addr;
+		char buffer[1024] = {0};
+
+		// 1. Create socket
+		if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+			perror("Socket creation error");
+			return -1;
+		}
+
+		// 2. Define server address
+		serv_addr.sin_family = AF_INET;
+		serv_addr.sin_port = htons(8042);
+
+		// Convert IPv4 and IPv6 addresses from text to binary form
+		if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+			perror("Invalid address/ Address not supported");
+			return -1;
+		}
+
+		// 3. Connect to server
+		if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+			perror("Connection Failed no ladder");
+		} else {
+			// there is a server: enable activation transmission
+			for (int i=0;i<100;i++) detsavelayer[i]=0;
+
+			// 5. Receive response
+			int valread = read(sock, buffer, sizeof(buffer));
+			int j=0;
+			for (int i=0;i<valread;i++) {
+				if (buffer[i]==' ') {
+					buffer[i]=0;
+					int l = atoi(buffer+j);
+					detsavelayer[l]=1;
+					printf("detson will save layer %d\n",l);
+					j=i+1;
+				}
+			}
+
+			// 6. Close socket
+			close(sock);
+		}
+	}
+ 
     LOG_INF("system info: n_threads = %d, n_threads_batch = %d, total_threads = %d\n", params.cpuparams.n_threads, params.cpuparams_batch.n_threads, std::thread::hardware_concurrency());
     LOG_INF("\n");
     LOG_INF("%s\n", gpt_params_get_system_info(params).c_str());
