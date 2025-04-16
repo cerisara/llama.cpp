@@ -3,6 +3,11 @@
 modnom="/mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf"
 modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
 modnom="/home/xtof/nvme/qwen2/Qwen2.5-7B.Q4_K_M.gguf"
+modnom="/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+
+line="Le prochain nombre premier après 5 est"
+./llama-cli --temp 0 -c 2048 -nkvo -m "$modnom" -p "$line" -fa -ngl 100 -n 1
+exit
 
 # echo "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSing a song<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" > allprompts.txt
 # echo "<|start_header_id|>system<|end_header_id|>\\n\\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\\n\\nSolve the following maths problem<|im_end|><|eot_id|><|start_header_id|>assistant<|end_header_id|>\\n\\n" >> allprompts.txt
