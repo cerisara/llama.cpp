@@ -1,5 +1,7 @@
 # make GGML_CUDA=1 llama-eval-callback
 
+# python getdata.py > frinstr.txt
+
 modnom="/mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf"
 modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
 modnom="/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
@@ -10,12 +12,20 @@ echo 'l_out-10' > layers2save
 echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'l_out-27' >> layers2save
-line="Le prochain nombre premier après 5 est"
-rm -f activs.bin
-rm -rf detlog
-mkdir detlog
-./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$line" -fa -ngl 100 -n 1
-grep prompt_token detlog/* | cut -c17- | sed 's/,//g;s,],,g' > activs.txt
+
+head -1000 frinstr.txt > frshort.txt
+
+rm -f activs.bin activs.txt
+touch activs.txt
+while IFS="" read -r p || [ -n "$p" ]
+do
+    rm -rf detlog
+    mkdir detlog
+    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -fa -ngl 100 -n 1
+    grep prompt_token detlog/* | cut -c17- | sed 's/,//g;s,],,g' >> activs.txt
+done < frshort.txt
+exit
+
 
 source /home/xtof/envs/transformers/bin/activate
 python ladder.py

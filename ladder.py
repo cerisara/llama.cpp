@@ -12,6 +12,9 @@ lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruc
 layer_prefix = "lm_head."
 ldim = 1024
 
+dev = "cpu"
+dev = "cuda"
+
 def loadlmhead():
     weights = {}
     with safe_open(lmheadfich, framework="pt", device="cpu") as f:
@@ -44,7 +47,7 @@ def readTens():
         v = struct.unpack(fmt1, buffer)
         y.append(v)
     y = numpy.array(y)
-    y = torch.Tensor(y)
+    y = torch.Tensor(y).to(dev)
     # y = T x D
     return y
  
@@ -114,7 +117,9 @@ def finalnorm(h, *a, **b):
     # supprime la derniere norm (sinon, pb de dim)
     return h
 mod.model.norm.forward = finalnorm
- 
+
+mod = mod.to(dev)
+
 for n,m in mod.named_modules(): print(n,type(m))
 for n,p in mod.named_parameters(): print(n,p.size())
 nparms = sum(p.numel() for p in mod.parameters() if p.requires_grad)
@@ -130,7 +135,7 @@ with open("activs.txt", "r") as futt:
         toks = [int(x) for x in s.split(" ")]
         print("utt", len(toks), s)
         intoks = [0]*len(toks)
-        x = {'input_ids': torch.LongTensor(intoks).view(1,-1) }
+        x = {'input_ids': torch.LongTensor(intoks).view(1,-1).to(dev) }
         y = mod(**x)
         print("out",y.logits.shape)
         gold = torch.LongTensor(toks[1:])
