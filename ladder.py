@@ -119,12 +119,23 @@ for n,p in mod.named_parameters(): print(n,p.size())
 nparms = sum(p.numel() for p in mod.parameters() if p.requires_grad)
 print("nparms",nparms)
 
-
-
+floss = torch.nn.CrossEntropyLoss()
+opt = torch.optim.AdamW(mod.parameters(), lr=0.0001)
 facts = open("activs.bin","rb")
-toks = [0]*ntoks
-x = {'input_ids': torch.LongTensor(toks).view(1,-1) }
-y=mod(**x)
-print("out",y)
+with open("activs.txt", "r") as futt: 
+    ss = futt.readlines()
+    for s in ss:
+        opt.zero_grad()
+        toks = [int(x) for x in s.split(" ")]
+        print("utt", len(toks), s)
+        intoks = [0]*len(toks)
+        x = {'input_ids': torch.LongTensor(intoks).view(1,-1) }
+        y = mod(**x)
+        print("out",y.logits.shape)
+        gold = torch.LongTensor(toks[1:])
+        loss = floss(y.logits[0,:-1], gold)
+        print("loss",loss.item())
+        loss.backward()
+        opt.step()
 facts.close()
 
