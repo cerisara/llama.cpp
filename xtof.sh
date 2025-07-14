@@ -10,8 +10,8 @@ echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'l_out-27' >> layers2save
 line="Le prochain nombre premier après 5 est"
-rm -f activs.bin
-./llama-cli --temp 0 -c 2048 -nkvo -m "$modnom" -p "$line" -fa -ngl 100 -n 1
+# rm -f activs.bin
+# ./llama-cli --temp 0 -c 2048 -nkvo -m "$modnom" -p "$line" -fa -ngl 100 -n 1
 
 source /home/xtof/envs/transformers/bin/activate
 python ladder.py

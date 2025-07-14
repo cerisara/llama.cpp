@@ -53,26 +53,23 @@ def myhookemb(layer, input, output):
     output[0] = x
     return output
  
+backbone_acts = None
 def myhook(layer, input, output):
+    global backbone_acts # pour le conserver pour sommer au final
     print("inlayer", layer.detlayer, len(output), output[0].shape)
     o = list(output)
     backbone_acts = readTens()
     print("hh", backbone_acts.shape, layer.downproj)
     x = layer.downproj(backbone_acts)
+    z = output[0] + x
+    o[0] = z
     return o
-    if False:
-        side_out = output[0]
-        z = side_out + x
-        # o = list(output)
-        # o[0] = z
-        return output
  
 def myhookfin(layer, input, output):
-    backbone_last = readTens()
     side_out = output[0]
     # on change la RS dim pour revenir a la dim du backbone !
     # il ne faut pas de norm apres cela...
-    z = layer.upproj(side_out) + backbone_last
+    z = layer.upproj(side_out) + backbone_acts
     print("outlayer", layer.detlayer, z.shape)
     return (z,)
 
@@ -111,6 +108,11 @@ for i in (3,):
     uproj = torch.nn.Linear(ldim, bdim)
     mod.model.layers[i].upproj = uproj
     mod.model.layers[i].register_forward_hook(myhookfin)
+
+def finalnorm(h, *a, **b):
+    # supprime la derniere norm (sinon, pb de dim)
+    return h
+mod.model.norm.forward = finalnorm
  
 for n,m in mod.named_modules(): print(n,type(m))
 for n,p in mod.named_parameters(): print(n,p.size())
