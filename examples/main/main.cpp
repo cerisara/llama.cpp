@@ -230,6 +230,8 @@ int main(int argc, char ** argv) {
     console::init(params.simple_io, params.use_color);
     atexit([]() { console::cleanup(); });
 
+	params.logits_all = 1;
+	/*
     if (params.logits_all) {
         LOG_ERR("************\n");
         LOG_ERR("%s: please use the 'perplexity' tool for perplexity calculations\n", __func__);
@@ -237,6 +239,7 @@ int main(int argc, char ** argv) {
 
         return 0;
     }
+	*/
 
     if (params.embedding) {
         LOG_ERR("************\n");
