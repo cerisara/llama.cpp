@@ -34,13 +34,11 @@ def readTens():
     buffer = facts.read(4)
     assert len(buffer)==4
     nv = struct.unpack('<i', buffer)[0]
-    print("read nv",nv)
     y = []
     for i in range(nv):
         buffer = facts.read(4)
         assert len(buffer)==4
         nd = struct.unpack('<i', buffer)[0]
-        print("read nd",nd)
         buffer = facts.read(4*nd)
         assert len(buffer)==4*nd
         fmt1 = '<'+str(nd)+'f'
@@ -63,7 +61,6 @@ def myhook(layer, input, output):
     print("inlayer", layer.detlayer, len(output), output[0].shape)
     o = list(output)
     backbone_acts = readTens()
-    print("hh", backbone_acts.shape, layer.downproj)
     x = layer.downproj(backbone_acts)
     z = output[0] + x
     o[0] = z
@@ -138,7 +135,7 @@ with open("activs.txt", "r") as futt:
         x = {'input_ids': torch.LongTensor(intoks).view(1,-1).to(dev) }
         y = mod(**x)
         print("out",y.logits.shape)
-        gold = torch.LongTensor(toks[1:])
+        gold = torch.LongTensor(toks[1:]).to(dev)
         loss = floss(y.logits[0,:-1], gold)
         print("loss",loss.item())
         loss.backward()

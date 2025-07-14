@@ -13,9 +13,11 @@ echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'l_out-27' >> layers2save
 
-head -1000 frinstr.txt > frshort.txt
+cat frinstr.txt > frshort.txt
 
-rm -f activs.bin activs.txt
+rm -f activs.bin activs.txt ~/nvme/activs.bin
+touch ~/nvme/activs.bin
+ln -s ~/nvme/activs.bin ./
 touch activs.txt
 while IFS="" read -r p || [ -n "$p" ]
 do
