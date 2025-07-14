@@ -1,37 +1,90 @@
 import torch
+import numpy
 from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from safetensors.torch import save_file, safe_open
+import struct
 
 modnom = "Qwen/Qwen3-0.6B"
-bdim = 8960
+# TODO: ce n'est pas le modele Math qui est utilise dans llama.cpp
+lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
 ldim = 1024
+
+def loadlmhead():
+    layer_prefix = "model.embed_tokens."
+    weights = {}
+    with safe_open(lmheadfich, framework="pt", device="cpu") as f:
+        for key in f.keys():
+            print("loadkey",key)
+            if key.startswith(layer_prefix):
+                k = key.replace(layer_prefix, "")
+                weights[k] = f.get_tensor(key)
+                v,d = weights[k].size()
+    print("loadhead",d,v)
+    l = torch.nn.Linear(d, v, bias=False)
+    l.load_state_dict(weights)
+    return l
+
+def readTens():
+    global facts
+    buffer = facts.read(4)
+    assert len(buffer)==4
+    nv = struct.unpack('<i', buffer)[0]
+    print("read nv",nv)
+    y = []
+    for i in range(nv):
+        buffer = facts.read(4)
+        assert len(buffer)==4
+        nd = struct.unpack('<i', buffer)[0]
+        print("read nd",nd)
+        buffer = facts.read(4*nd)
+        assert len(buffer)==4*nd
+        fmt1 = '<'+str(nd)+'f'
+        v = struct.unpack(fmt1, buffer)
+        y.append(v)
+    y = numpy.array(y)
+    y = torch.Tensor(y)
+    # y = T x D
+    return y
  
 def myhookemb(layer, input, output):
-    zt = output[0].dtype
-    # TODO: replace embeddings with first activations
-    z = z.to(zt)
-    return (z,)
+    backbone_acts = readTens()
+    x = layer.downproj(backbone_acts)
+    output[0] = x
+    return output
  
 def myhook(layer, input, output):
-    z = output[0]
-    zt = z.dtype
-    z = z.to(torch.float32)
-    # TODO: add activs
-    z = z.to(zt)
-    return (z,)
+    print("inlayer", layer.detlayer, len(output), output[0].shape)
+    o = list(output)
+    backbone_acts = readTens()
+    print("hh", backbone_acts.shape, layer.downproj)
+    x = layer.downproj(backbone_acts)
+    return o
+    if False:
+        side_out = output[0]
+        z = side_out + x
+        # o = list(output)
+        # o[0] = z
+        return output
  
 def myhookfin(layer, input, output):
-    z = output[0]
-    zt = z.dtype
-    z = z.to(torch.float32)
-    # TODO: add activs
-    # TODO: sum with last backbone output
-    z = z.to(zt)
+    backbone_last = readTens()
+    side_out = output[0]
+    # on change la RS dim pour revenir a la dim du backbone !
+    # il ne faut pas de norm apres cela...
+    z = layer.upproj(side_out) + backbone_last
+    print("outlayer", layer.detlayer, z.shape)
     return (z,)
- 
+
+facts = open("activs.bin","rb")
+x = readTens()
+ntoks, bdim = x.size()
+facts.close()
+
 cfg = AutoConfig.from_pretrained(modnom)
 cfg.max_window_layers = 4
 cfg.num_hidden_layers = 4
+# cfg.head_dim = 64
 cfg.layer_types = ["full_attention"]*4
 cfg.bos_token_id = 0
 cfg.eos_token_id = 0
@@ -40,19 +93,21 @@ print(cfg)
 
 mod = Qwen3ForCausalLM(cfg)
 for p in mod.model.embed_tokens.parameters(): p.requires_grad=False
+mod.lm_head = loadlmhead()
+for p in mod.lm_head.parameters(): p.requires_grad=False
 for n,p in mod.named_parameters(): print(n,p.size())
 print("lmhead", mod.lm_head)
 
+dproj = torch.nn.Linear(bdim, ldim)
+mod.model.embed_tokens.downproj = dproj
 mod.model.embed_tokens.register_forward_hook(myhookemb)
 for i in range(3):
     mod.model.layers[i].detlayer = i
     dproj = torch.nn.Linear(bdim, ldim)
     mod.model.layers[i].downproj = dproj
     mod.model.layers[i].register_forward_hook(myhook)
-for i in (4,):
+for i in (3,):
     mod.model.layers[i].detlayer = i
-    dproj = torch.nn.Linear(bdim, ldim)
-    mod.model.layers[i].downproj = dproj
     uproj = torch.nn.Linear(ldim, bdim)
     mod.model.layers[i].upproj = uproj
     mod.model.layers[i].register_forward_hook(myhookfin)
@@ -61,8 +116,13 @@ for n,m in mod.named_modules(): print(n,type(m))
 for n,p in mod.named_parameters(): print(n,p.size())
 nparms = sum(p.numel() for p in mod.parameters() if p.requires_grad)
 print("nparms",nparms)
-exit()
 
-# TODO: add upproj et lm_head
 
-toker = AutoTokenizer.from_pretrained(modnom)
+
+facts = open("activs.bin","rb")
+toks = [0]*ntoks
+x = {'input_ids': torch.LongTensor(toks).view(1,-1) }
+y=mod(**x)
+print("out",y)
+facts.close()
+
