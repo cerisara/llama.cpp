@@ -6,12 +6,13 @@ from safetensors.torch import save_file, safe_open
 import struct
 
 modnom = "Qwen/Qwen3-0.6B"
-# TODO: ce n'est pas le modele Math qui est utilise dans llama.cpp
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
+layer_prefix = "model.embed_tokens."
+lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensors"
+layer_prefix = "lm_head."
 ldim = 1024
 
 def loadlmhead():
-    layer_prefix = "model.embed_tokens."
     weights = {}
     with safe_open(lmheadfich, framework="pt", device="cpu") as f:
         for key in f.keys():
