@@ -1,6 +1,6 @@
 
-cette version de llama-cli doit etre compilee avec
-    make GGML_CUDA=1 llama-cli
+cette version de llama-cli doit etre compilee sur lully avec (sinon ca crash):
+make LLAMA_DEBUG=1 GGML_CUDA=1 llama-cli
 
 il faut ecrire dans le fichier "layers2save" les nodes qui doivent etre sauves
 (la liste des nodes est affichee lorsqu'on run xtof.sh)
