@@ -41,8 +41,7 @@ static std::vector<llama_token> * g_output_tokens;
 static bool is_interacting  = false;
 static bool need_insert_eot = false;
 
-// detson debug
-int detsavelayer[100] = {0};
+char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
 struct callback_data {
     std::vector<uint8_t> data;
 };
@@ -141,11 +140,8 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
     return formatted;
 }
  
-static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb, int curlayer) {
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
     float sum = 0;
-    FILE *factivs = fopen("activs.bin","ab");
-    fwrite(&ne[0],sizeof(int),1,factivs);
-    fwrite(&ne[1],sizeof(int),1,factivs);
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
@@ -165,20 +161,13 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else {
                         GGML_ABORT("fatal error");
                     }
-
-                    // if (sum==0) {
-                        // just print the first value
-                        // printf("detson activfirst %d %f\n",curlayer,v);
-                    // }
-                    fwrite(&v,sizeof(float),1,factivs);
-                    // printf("DETAC %d %d %d %d %d %f\n",curlayer,i0,i1,i2,i3,v);
+					printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
     }
     printf("detsum %f\n",sum);
-    fclose(factivs);
 }
  
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -201,55 +190,20 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
     }
     
-    // printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
-    if (!strncmp(t->name,"result_output",13)) {
-        {
-            // debug: check predicted output token
-            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-            // printf("detsontype %d %d\n",t->type,GGML_TYPE_F32);
-            // printf("detsonpred %d %d %d %d %d\n",t->ne[0],t->ne[1],t->ne[2],t->ne[3],is_host);
-            float *vv = (float *)data;
-            printf("loglikes %e %e %e\n", vv[3007], vv[24233], vv[3557]);
-        }
-        // tt = full embedding matrix
-        struct ggml_tensor *tt = t->src[0];
-        printf("detsonlayerprev %s %s %d %d %d %d\n",tt->name, ggml_op_desc(tt), tt->ne[0], tt->ne[1], tt->ne[2], tt->ne[3]);
-        const bool is_host = ggml_backend_buffer_is_host(tt->buffer);
-        if (!is_host) {
-            auto n_bytes = ggml_nbytes(tt);
-            cb_data->data.resize(n_bytes);
-            ggml_backend_tensor_get(tt, cb_data->data.data(), 0, n_bytes);
-        }
-        uint8_t * data = is_host ? (uint8_t *) tt->data : cb_data->data.data();
+	for (int i=0;i<1000;i++) {
+		if (detsavelayer[i]==NULL) break;
 
-        if (detsavelayer[99]==1) {
-            if (tt->type != GGML_TYPE_F32) {
-                auto nels = ggml_nelements(tt);
-                ggml_type_traits_t qtype = ggml_internal_get_type_traits(tt->type);
-                std::vector<uint8_t> dequant_buf(nels * sizeof(float));
-                qtype.to_float(data, (float *)dequant_buf.data(), nels);
-                float *dqbuf = (float *)dequant_buf.data();
-                printf("detsondbug %d %f %f %f\n",nels, dqbuf[100], dqbuf[101], dqbuf[102]);
-                FILE *f = fopen("embs.bin","wb");
-                fwrite(dqbuf,sizeof(float),nels,f);
-                fclose(f);
-            }
-        } 
-    }
-    if (!ggml_is_quantized(t->type)) {
-        if (!strncmp(t->name,"l_out",5)) {
-            int curlay = atoi(t->name+6);
-            if (detsavelayer[curlay]==1) {
-                printf("detson save %s\n",t->name);
-                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-                detson_save_tensor(data, t->type, t->ne, t->nb, curlay);
-            }
-        }
-        if (!strncmp(t->name,"result_norm",11)) {
-            printf("detson save %s %d %d\n",t->name,t->ne[0],t->ne[1]);
-            uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-            detson_save_tensor(data, t->type, t->ne, t->nb, 999);
-        }
+		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+		if (strlen(detsavelayer[i])==strlen(t->name)) {
+			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+				if (!ggml_is_quantized(t->type)) {
+					printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
+					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+					detson_save_tensor(data, t->type, t->ne, t->nb);
+				}
+				break;
+			}
+		}
     }
  
     return true;
@@ -306,17 +260,20 @@ int main(int argc, char ** argv) {
     llama_numa_init(params.numa);
 
     // detson debug
+	for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
     callback_data cb_data;
     params.cb_eval = ggml_debug;
     params.cb_eval_user_data = &cb_data;
     params.warmup = false;
     {
-        int j;
+        int j=0;
         char line[10000];
         FILE *f = fopen("layers2save","r");
         while (fgets(line, sizeof(line), f) != NULL) {
-            j = atoi(line);
-            detsavelayer[j]=1;
+			line[strlen(line)-1]=0; // -1 because we remove \n
+			if (strlen(line)==0) break;
+            detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
+			strcpy(detsavelayer[j++],line);
         }
         fclose(f);
     }
