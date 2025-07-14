@@ -1,3 +1,20 @@
+
+cette version de llama-cli doit etre compilee avec
+    make GGML_CUDA=1 llama-cli
+
+il faut ecrire dans le fichier "layers2save" les nodes qui doivent etre sauves
+(la liste des nodes est affichee lorsqu'on run xtof.sh)
+
+elle accumule dans le fichier "activs.bin" les activations en sortie de ces nodes, dans l'ordre:
+- nb de trames (int)
+- dim du vecteur (int)
+- le vecteur d'activation (dim floats)
+
+
+
+
+-------------------------
+
 # llama.cpp
 
 ![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)

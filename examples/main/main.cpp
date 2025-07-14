@@ -142,9 +142,12 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
  
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
     float sum = 0;
+	FILE *fdet = fopen("activs.bin","ab");
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+			fwrite(&ne[1],sizeof(int),1,fdet);
             for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+				fwrite(&ne[0],sizeof(int),1,fdet);
                 for (int64_t i0 = 0; i0 < ne[0]; i0++) {
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
@@ -161,12 +164,14 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else {
                         GGML_ABORT("fatal error");
                     }
-					printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
+					fwrite(&v,sizeof(float),1,fdet);
+					// printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
                     sum += v;
                 }
             }
         }
     }
+	fclose(fdet);
     printf("detsum %f\n",sum);
 }
  
