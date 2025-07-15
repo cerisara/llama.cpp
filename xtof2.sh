@@ -2,7 +2,7 @@
 
 # python getdata.py > frinstr.txt
 
-head -500 frinstr.txt > frshort.txt
+head -5000 frinstr.txt > frshort.txt
 
 source /home/xtof/envs/transformers/bin/activate
 python ladder.py

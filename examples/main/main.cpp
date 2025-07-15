@@ -391,6 +391,7 @@ int main(int argc, char ** argv) {
 
     std::vector<llama_token> embd_inp;
 
+    // detson TODO charger plusieurs prompts ici ?
     {
         auto prompt = (params.conversation && params.enable_chat_template && !params.prompt.empty())
             ? chat_add_and_format(model, chat_msgs, "system", params.prompt) // format the system prompt in conversation mode
