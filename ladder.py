@@ -12,8 +12,8 @@ lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruc
 layer_prefix = "lm_head."
 ldim = 1024
 
-dev = "cpu"
 dev = "cuda"
+dev = "cpu"
 
 def loadlmhead():
     weights = {}
