@@ -13,7 +13,7 @@ echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'l_out-27' >> layers2save
 
-cat frinstr.txt > frshort.txt
+# cat frinstr.txt > frshort.txt
 
 rm -f activs.bin activs.txt ~/nvme/activs.bin
 touch ~/nvme/activs.bin
