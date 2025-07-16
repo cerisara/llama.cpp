@@ -24,7 +24,6 @@ time_log: str = f"Time imports : {time2-time1} secs\n"
 res += time_log
 print(time_log)
 
-
 #
 modnom = "Qwen/Qwen3-0.6B"
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
@@ -39,6 +38,7 @@ dev = "cpu"
 dev = "cuda"
 
 model_path_state_dict = 'model_ladder_state_dict.pth'
+optim_path_state_dict = 'optim_state_dict.pth'
 
 nb_to_load: int = 0
 
@@ -257,13 +257,24 @@ def finalnorm(h, *a, **b):
 
 mod.model.norm.forward = finalnorm
 
+#
+opt = torch.optim.AdamW(mod.parameters(), lr=0.0001)
+
+#
 if os.path.exists(model_path_state_dict):
     #
     loaded_state_dict = torch.load(model_path_state_dict)
     mod.load_state_dict(loaded_state_dict)
     print(f"Model state_dict loaded into new model instance from {model_path_state_dict}")
 
+#
+if os.path.exists(optim_path_state_dict):
+    #
+    loaded_state_dict = torch.load(optim_path_state_dict)
+    opt.load_state_dict(loaded_state_dict)
+    print(f"Optim state_dict loaded into new optimizer instance from {optim_path_state_dict}")
 
+#
 mod = mod.to(dev)
 
 # for n,m in mod.named_modules(): print(n,type(m))
@@ -272,7 +283,7 @@ nparms = sum(p.numel() for p in mod.parameters() if p.requires_grad)
 print("nb params : ",nparms)
 
 floss = torch.nn.CrossEntropyLoss()
-opt = torch.optim.AdamW(mod.parameters(), lr=0.0001)
+#
 facts = open("activs.bin","rb")
 
 #
@@ -284,12 +295,16 @@ res += time_log
 print(time_log)
 
 
+#
 with open("activs.txt", "r") as futt: 
     ss = futt.readlines()
     for num_line, s in enumerate(ss):
         
         #
         log_line: str = f"\n\nTraining on line : {num_line}...\n\n"
+        #
+        print(log_line)
+        res += log_line
 
         #
         time6: float = time.time()
@@ -331,11 +346,19 @@ with open("activs.txt", "r") as futt:
         print(time_log)
 
 
+#
 facts.close()
+
 
 # --- Saving only the state_dict ---
 torch.save(mod.state_dict(), model_path_state_dict)
 print(f"\nModel state_dict saved to {model_path_state_dict}")
+
+
+# --- Saving optimizer state dict ---
+torch.save(opt.state_dict(), optim_path_state_dict)
+print(f"\nOptim state_dict saved to {optim_path_state_dict}")
+
 
 # --- Saving log files ---
 # res_file_name: str = f"res_log_{get_timestamp_with_milliseconds_for_filename()}.txt"
