@@ -133,3 +133,11 @@ poetry.toml
 
 # Test models for lora adapters
 /lora-tests
+
+# Activations files : 
+*activ*
+
+# Log files
+*detlog*
+*res_log*
+
