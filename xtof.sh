@@ -1,4 +1,6 @@
 # make GGML_CUDA=1 llama-eval-callback
+#
+# see https://qwen.readthedocs.io/en/v1.5/run_locally/llama.cpp.html
 
 # python getdata.py > frinstr.txt
 

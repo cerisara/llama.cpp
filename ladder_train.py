@@ -18,7 +18,7 @@ import datetime
 import os
 
 
-activfich = "/home/xtof/nvme/activs_xtofe"
+activfich = "activs"
 
 #
 time2: float = time.time()
@@ -31,10 +31,13 @@ print(time_log)
 #
 modnom = "Qwen/Qwen3-0.6B"
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
-layer_prefix = "model.embed_tokens."
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensoris"
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
 lmheadfich = "/home/xtof/nvme/qwen2.5-72B_lmhead.safetensors"
+lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775/model.safetensors"
+layer_prefix = "model.embed_tokens."
+
+lmheadfich = "/home/data/qwen2.5-instruct-00037-of-00037.safetensors"
 layer_prefix = "lm_head."
 norm_prefix = "model.norm."
 ldim = 1024
@@ -94,7 +97,7 @@ def readTens():
         #
         activs_buffers.append( [] )
 
-    # print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
+    print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
 
     while nb_to_load > 0:
 
@@ -156,7 +159,7 @@ def myhookfin(layer, input, output):
     side_out = output[0]
     # on change la RS dim pour revenir a la dim du backbone !
     # il ne faut pas de norm apres cela...
-    xx = layer.upproj(side_out) 
+    # z = layer.upproj(side_out) + backbone_acts
     z = backbone_acts.unsqueeze(0)
     z = detnorm(z)
     # print("outlayer", layer.detlayer, z.shape)
