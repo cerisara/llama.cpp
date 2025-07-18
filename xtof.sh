@@ -1,31 +1,49 @@
 # make GGML_CUDA=1 llama-eval-callback
+#
+# see https://qwen.readthedocs.io/en/v1.5/run_locally/llama.cpp.html
 
 # python getdata.py > frinstr.txt
 
-modnom="/mnt/dos/xtof/gguf_ggml_models/llama-2-7b-chat.Q5_K_M.gguf"
-modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
-modnom="/mnt/dos/xtof/gguf_ggml_models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-modnom="/home/xtof/nvme/qwen2/Qwen2.5-7B.Q4_K_M.gguf"
-modnom="/home/xtof/nvme/qwen2/qwen2.5-7b-instruct-q5_k_m.gguf"
+modnom="/home/data/models--Qwen--Qwen2.5-72B-Instruct-GGUF/snapshots/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"
+modnom="/home/data/Qwen2.5-72B-Instruct-GGUF/qwen2.5-72b-instruct-q3_k_m-00001-of-00009.gguf"
+modnom="/home/xtof/nvme/qwen2/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
-echo 'l_out-10' > layers2save
-echo 'l_out-11' >> layers2save
-echo 'l_out-12' >> layers2save
-echo 'l_out-27' >> layers2save
+rm -f layers2save
+touch layers2save
+# echo 'l_out-10' >> layers2save
+# echo 'l_out-11' >> layers2save
+# echo 'l_out-12' >> layers2save
+# echo 'l_out-27' >> layers2save
 
-cat frinstr.txt > frshort.txt
+tf="/home/data/enshorts_0.txt"
+tf="/home/data/enshorts_0_15lines.txt"
+tf="/home/data/freshnews.txt"
+tf="/home/data/fresh_news_part_02.txt"
+# tf="/home/data/fresh_news_part_01_15lines.txt"
 
-rm -f activs.bin activs.txt ~/nvme/activs.bin
-touch ~/nvme/activs.bin
-ln -s ~/nvme/activs.bin ./
+grep -v -e GOLD arxiv.txt > toto.txt
+tf="toto.txt"
+
+rm -f activs.txt activs.bin
 touch activs.txt
+
+
 while IFS="" read -r p || [ -n "$p" ]
 do
     rm -rf detlog
     mkdir detlog
-    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -fa -ngl 100 -n 1
+    ./llama-cli --logdir detlog --temp 0 -c 32000 -nkvo -m "$modnom" -p "$p" -fa -ngl 100 -n 1
     grep prompt_token detlog/* | cut -c17- | sed 's/,//g;s,],,g' >> activs.txt
-done < frshort.txt
+done < "$tf"
+
+# rm -rf detlog
+# mkdir detlog
+# p=`cat $tf`
+# ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$tf" -nkvo  -fa -ngl 75 -n 1
+
+# ls -lstr detlog | awk '{print "cat detlog/"$NF" | grep prompt_token | cut -c17- | sed \"s/,//g;s,],,g\" >> activs.txt"}' > tt.sh
+# bash tt.sh
+
 exit
 
 

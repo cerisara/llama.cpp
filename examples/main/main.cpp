@@ -141,17 +141,35 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
 }
  
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
+
     float sum = 0;
-	FILE *fdet = fopen("activs.bin","ab");
+
+    FILE *fdet = fopen("activs.bin","ab");
+
+    std::cout << "NDEBUG | ne[3] = " << ne[3] << "\n";
+
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+
+        std::cout << "NDEBUG | ne[2] = " << ne[2] << "\n";
+
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-			fwrite(&ne[1],sizeof(int),1,fdet);
-            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
-				fwrite(&ne[0],sizeof(int),1,fdet);
-                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+
+            int32_t val = ne[1];
+	    fwrite(&val,sizeof(int32_t),1,fdet);
+	    std::cout << "NDEBUG | ne[1] = " << val << "\n";
+
+	    for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+
+		int32_t val2 = ne[0];
+	  	fwrite(&val2,sizeof(int32_t),1,fdet);
+		// std::cout << "NDEBUG | ne[0] = " << val2 << "\n"; // -> 8192 for everyone
+
+		for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
-                    if (type == GGML_TYPE_F16) {
+
+		    if (type == GGML_TYPE_F16) {
                         v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
                     } else if (type == GGML_TYPE_F32) {
                         v = *(float *) &data[i];
@@ -164,19 +182,24 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else {
                         GGML_ABORT("fatal error");
                     }
-					fwrite(&v,sizeof(float),1,fdet);
-					// printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
+
+		    fwrite(&v,sizeof(float),1,fdet);
+		    // printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
+
                     sum += v;
-                }
+
+		}
             }
         }
     }
-	fclose(fdet);
-    printf("detsum %f\n",sum);
+
+    fclose(fdet);
+
+    // printf("detsum %f\n",sum);
 }
  
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
-    printf("detnode %s\n",t->name);
+    // printf("detnode %s\n",t->name);
     auto * cb_data = (callback_data *) user_data;
 
     const struct ggml_tensor * src0 = t->src[0];
@@ -202,7 +225,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
 			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 				if (!ggml_is_quantized(t->type)) {
-					printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
+					// printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
 					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
 					detson_save_tensor(data, t->type, t->ne, t->nb);
 				}
@@ -213,6 +236,53 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
  
     return true;
 } 
+
+
+std::vector<std::string> splitStringByNewline(const std::string& str) {
+    std::vector<std::string> lines;
+    std::stringstream ss(str); // Create a stringstream from the input string
+    std::string line;
+
+    // Read lines one by one until there are no more
+    while (std::getline(ss, line)) {
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+/**
+ * @brief Reads the content of a file line by line into a vector of strings.
+ *
+ * @param filename The path to the file to read.
+ * @param lines A reference to a std::vector<std::string> where the lines will be stored.
+ * @return true if the file was opened and read successfully, false otherwise.
+ */
+bool readLinesFromFile(const std::string& filename, std::vector<std::string>& lines) {
+    // Clear any existing content in the vector
+    lines.clear();
+
+    // Create an input file stream object
+    std::ifstream file(filename);
+
+    // Check if the file was opened successfully
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file '" << filename << "'\n";
+        return false;
+    }
+
+    std::string line;
+    // Read the file line by line until the end of the file is reached
+    while (std::getline(file, line)) {
+        lines.push_back(line);
+    }
+
+    // Close the file stream (optional, as it's closed automatically when it goes out of scope)
+    file.close();
+
+    return true;
+}
+
+
 
 int main(int argc, char ** argv) {
     gpt_params params;
@@ -337,15 +407,42 @@ int main(int argc, char ** argv) {
 
     llama_attach_threadpool(ctx, threadpool, threadpool_batch);
 
+    // --------------------------------------------------------------- //
+
+    /*
+    // --- Read the file content ---
+    std::vector<std::string> prompt_lines;
+    if (readLinesFromFile(params.prompt, prompt_lines)) {
+        std::cout << "Successfully read " << prompt_lines.size() << " lines from '" << params.prompt << "'\n";
+    } else {
+        std::cout << "Failed to read file: " << params.prompt << "\n";
+        exit(1);
+    }
+    */
+
+    std::vector<std::string> prompt_lines = {params.prompt};
+
+    int num_crt_prompt = 0;
+
+    for(std::string prompt_line : prompt_lines) {
+
+    num_crt_prompt += 1;
+
+    params.prompt = prompt_line;
+
+    std::cout << "\n\n---------------------------------\n\nCurrent prompt `" << params.prompt << "` !\n\n-------------------------------\n\n";
+
+    //  ------------------------------------------------------------ //
+
     const int n_ctx_train = llama_n_ctx_train(model);
     const int n_ctx = llama_n_ctx(ctx);
 
-    if (n_ctx > n_ctx_train) {
+    if (num_crt_prompt == 1 && n_ctx > n_ctx_train) {
         LOG_WRN("%s: model was trained on only %d context tokens (%d specified)\n", __func__, n_ctx_train, n_ctx);
     }
 
     // print chat template example in conversation mode
-    if (params.conversation) {
+    if (num_crt_prompt == 1 && params.conversation) {
         if (params.enable_chat_template) {
             LOG_INF("%s: chat template example:\n%s\n", __func__, llama_chat_format_example(model, params.chat_template).c_str());
         } else {
@@ -389,9 +486,10 @@ int main(int argc, char ** argv) {
 
     LOG_DBG("n_ctx: %d, add_bos: %d\n", n_ctx, add_bos);
 
+    
     std::vector<llama_token> embd_inp;
+    embd_inp.clear();
 
-    // detson TODO charger plusieurs prompts ici ?
     {
         auto prompt = (params.conversation && params.enable_chat_template && !params.prompt.empty())
             ? chat_add_and_format(model, chat_msgs, "system", params.prompt) // format the system prompt in conversation mode
@@ -415,14 +513,16 @@ int main(int argc, char ** argv) {
             LOG_WRN("embd_inp was considered empty and bos was added: %s\n", string_from(ctx, embd_inp).c_str());
         } else {
             LOG_ERR("input is empty\n");
-            return -1;
+            // return -1;
+	    continue;
         }
     }
 
     // Tokenize negative prompt
     if ((int) embd_inp.size() > n_ctx - 4) {
         LOG_ERR("%s: prompt is too long (%d tokens, max %d)\n", __func__, (int) embd_inp.size(), n_ctx - 4);
-        return 1;
+        // return 1;
+	continue;
     }
 
     // debug message about similarity of saved session, if applicable
@@ -464,16 +564,16 @@ int main(int argc, char ** argv) {
     // number of tokens to keep when resetting context
     if (params.n_keep < 0 || params.n_keep > (int) embd_inp.size()) {
         params.n_keep = (int)embd_inp.size();
-    } else {
+    } else if(num_crt_prompt == 1) {
         params.n_keep += add_bos; // always keep the BOS token
     }
 
-    if (params.conversation) {
+    if (num_crt_prompt == 1 && params.conversation) {
         params.interactive_first = true;
     }
 
     // enable interactive mode if interactive start is specified
-    if (params.interactive_first) {
+    if (num_crt_prompt == 1 && params.interactive_first) {
         params.interactive = true;
     }
 
@@ -510,7 +610,7 @@ int main(int argc, char ** argv) {
 #endif
     }
 
-    if (params.interactive) {
+    if (num_crt_prompt == 1 && params.interactive) {
         LOG_INF("%s: interactive mode on.\n", __func__);
 
         if (!params.antiprompt.empty()) {
@@ -553,7 +653,8 @@ int main(int argc, char ** argv) {
     smpl = gpt_sampler_init(model, sparams);
     if (!smpl) {
         LOG_ERR("%s: failed to initialize sampling subsystem\n", __func__);
-        return 1;
+        // return 1;
+	continue;
     }
 
     LOG_INF("sampler seed: %u\n",     gpt_sampler_get_seed(smpl));
@@ -578,7 +679,7 @@ int main(int argc, char ** argv) {
     }
     LOG_INF("\n");
 
-    if (params.interactive) {
+    if (num_crt_prompt == 1 && params.interactive) {
         const char * control_message;
         if (params.multiline_input) {
             control_message = " - To return control to the AI, end your input with '\\'.\n"
@@ -631,8 +732,9 @@ int main(int argc, char ** argv) {
         llama_token * enc_input_buf = embd_inp.data();
 
         if (llama_encode(ctx, llama_batch_get_one(enc_input_buf, enc_input_size, 0, 0))) {
-            LOG_ERR("%s : failed to eval\n", __func__);
-            return 1;
+            LOG_ERR("%s : failed to eval encode\n", __func__);
+            // return 1;
+	    continue;
         }
 
         llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
@@ -750,9 +852,13 @@ int main(int argc, char ** argv) {
 
                 LOG_DBG("eval: %s\n", string_from(ctx, embd).c_str());
 
+		//
+		std::cout << "\nNDEBUG | i = " << i << " | n_eval = " << n_eval << " | n_past = " << n_past << " |i\n\n";
+
                 if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
-                    LOG_ERR("%s : failed to eval\n", __func__);
-                    return 1;
+                    LOG_ERR("%s : failed to eval decode\n", __func__);
+                    // return 1;
+		    continue;
                 }
 
                 n_past += n_eval;
@@ -1029,6 +1135,8 @@ int main(int argc, char ** argv) {
     LOG("\n\n");
     gpt_perf_print(ctx, smpl);
     write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
+
+    }
 
     gpt_sampler_free(smpl);
 

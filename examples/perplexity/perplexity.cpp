@@ -3,6 +3,7 @@
 #include "log.h"
 #include "llama.h"
 
+#include <iostream>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,6 +22,108 @@
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
 
+char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
+struct callback_data {
+    std::vector<uint8_t> data;
+};
+ 
+static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
+
+    float sum = 0;
+
+    FILE *fdet = fopen("activs.bin","ab");
+
+    std::cout << "NDEBUG | ne[3] = " << ne[3] << "\n";
+
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+
+        std::cout << "NDEBUG | ne[2] = " << ne[2] << "\n";
+
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+
+            int32_t val = ne[1];
+	    fwrite(&val,sizeof(int32_t),1,fdet);
+	    std::cout << "NDEBUG | ne[1] = " << val << "\n";
+
+	    for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+
+		int32_t val2 = ne[0];
+	  	fwrite(&val2,sizeof(int32_t),1,fdet);
+		// std::cout << "NDEBUG | ne[0] = " << val2 << "\n"; // -> 8192 for everyone
+
+		for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+
+		    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) &data[i];
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) &data[i];
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) &data[i];
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) &data[i];
+                    } else {
+                        GGML_ABORT("fatal error");
+                    }
+
+		    fwrite(&v,sizeof(float),1,fdet);
+		    // printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
+
+                    sum += v;
+
+		}
+            }
+        }
+    }
+
+    fclose(fdet);
+
+    // printf("detsum %f\n",sum);
+}
+ 
+static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
+    // printf("detnode %s\n",t->name);
+    auto * cb_data = (callback_data *) user_data;
+
+    const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
+
+    if (ask) {
+        return true; // Always retrieve data
+    }
+
+    // copy the data from the GPU memory if needed
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+
+    if (!is_host) {
+        auto n_bytes = ggml_nbytes(t);
+        cb_data->data.resize(n_bytes);
+        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+    }
+    
+	for (int i=0;i<1000;i++) {
+		if (detsavelayer[i]==NULL) break;
+
+		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+		if (strlen(detsavelayer[i])==strlen(t->name)) {
+			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+				if (!ggml_is_quantized(t->type)) {
+					// printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
+					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+					detson_save_tensor(data, t->type, t->ne, t->nb);
+				}
+				break;
+			}
+		}
+    }
+ 
+    return true;
+} 
+ 
 struct results_perplexity {
     std::vector<llama_token> tokens;
     double                   ppl_value;
@@ -2002,7 +2105,26 @@ int main(int argc, char ** argv) {
 
     llama_backend_init();
     llama_numa_init(params.numa);
-
+ 
+	// detson debug
+	for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
+    callback_data cb_data;
+    params.cb_eval = ggml_debug;
+    params.cb_eval_user_data = &cb_data;
+    params.warmup = false;
+    {
+        int j=0;
+        char line[10000];
+        FILE *f = fopen("layers2save","r");
+        while (fgets(line, sizeof(line), f) != NULL) {
+			line[strlen(line)-1]=0; // -1 because we remove \n
+			if (strlen(line)==0) break;
+            detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
+			strcpy(detsavelayer[j++],line);
+        }
+        fclose(f);
+    }
+ 
     // load the model and apply lora adapter, if any
     llama_init_result llama_init = llama_init_from_gpt_params(params);
 
