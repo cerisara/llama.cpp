@@ -1,20 +1,28 @@
 # make GGML_CUDA=1 llama-eval-callback
+#
+# see https://qwen.readthedocs.io/en/v1.5/run_locally/llama.cpp.html
 
 # python getdata.py > frinstr.txt
 
 modnom="/home/data/models--Qwen--Qwen2.5-72B-Instruct-GGUF/snapshots/qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"
 modnom="/home/data/Qwen2.5-72B-Instruct-GGUF/qwen2.5-72b-instruct-q3_k_m-00001-of-00009.gguf"
+modnom="/home/xtof/nvme/qwen2/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
-echo 'l_out-10' > layers2save
-echo 'l_out-11' >> layers2save
-echo 'l_out-12' >> layers2save
-echo 'l_out-27' >> layers2save
+rm -f layers2save
+touch layers2save
+# echo 'l_out-10' >> layers2save
+# echo 'l_out-11' >> layers2save
+# echo 'l_out-12' >> layers2save
+# echo 'l_out-27' >> layers2save
 
 tf="/home/data/enshorts_0.txt"
 tf="/home/data/enshorts_0_15lines.txt"
 tf="/home/data/freshnews.txt"
 tf="/home/data/fresh_news_part_02.txt"
 # tf="/home/data/fresh_news_part_01_15lines.txt"
+
+grep -v -e GOLD arxiv.txt > toto.txt
+tf="toto.txt"
 
 rm -f activs.txt activs.bin
 touch activs.txt
@@ -24,7 +32,7 @@ while IFS="" read -r p || [ -n "$p" ]
 do
     rm -rf detlog
     mkdir detlog
-    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -fa -ngl 75 -n 1
+    ./llama-cli --logdir detlog --temp 0 -c 32000 -nkvo -m "$modnom" -p "$p" -fa -ngl 100 -n 1
     grep prompt_token detlog/* | cut -c17- | sed 's/,//g;s,],,g' >> activs.txt
 done < "$tf"
 

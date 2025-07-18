@@ -9,6 +9,7 @@ import torch
 import numpy
 #
 from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
+from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from safetensors.torch import save_file, safe_open
 #
@@ -29,6 +30,7 @@ parser.add_argument("--out_log", type=str)
 #
 args: argparse.Namespace = parser.parse_args()
 
+
 #
 time2: float = time.time()
 #
@@ -40,10 +42,15 @@ print(time_log)
 #
 modnom = "Qwen/Qwen3-0.6B"
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
-layer_prefix = "model.embed_tokens."
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensoris"
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
+lmheadfich = "/home/xtof/nvme/qwen2.5-72B_lmhead.safetensors"
+lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775/model.safetensors"
+layer_prefix = "model.embed_tokens."
+
+lmheadfich = "/home/data/qwen2.5-instruct-00037-of-00037.safetensors"
 layer_prefix = "lm_head."
+norm_prefix = "model.norm."
 ldim = 1024
 lr: float = args.lr
 
@@ -62,17 +69,25 @@ current_activation: int = 4
 
 def loadlmhead():
     weights = {}
+    wnorm = {}
     with safe_open(lmheadfich, framework="pt", device="cpu") as f:
         for key in f.keys():
-            # print("loadkey",key)
+            print("loadkey",key)
             if key.startswith(layer_prefix):
                 k = key.replace(layer_prefix, "")
                 weights[k] = f.get_tensor(key)
                 v,d = weights[k].size()
+            elif key.startswith(norm_prefix):
+                k = key.replace(norm_prefix, "")
+                wnorm[k] = f.get_tensor(key)
+                ss = wnorm[k].size()
+                print("ddd",ss)
     # print("loadhead",d,v)
     l = torch.nn.Linear(d, v, bias=False)
     l.load_state_dict(weights)
-    return l
+    ln = Qwen2RMSNorm(ss[0],1e-06)
+    ln.load_state_dict(wnorm)
+    return l,ln
 
 def readTens():
     global facts, nb_to_load, activations, current_activation, nb_activations
@@ -94,7 +109,7 @@ def readTens():
         #
         activs_buffers.append( [] )
 
-    # print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
+    print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
 
     while nb_to_load > 0:
 
@@ -157,10 +172,13 @@ def myhook(layer, input, output):
     return o
  
 def myhookfin(layer, input, output):
+    global detnorm
     side_out = output[0]
     # on change la RS dim pour revenir a la dim du backbone !
     # il ne faut pas de norm apres cela...
-    z = layer.upproj(side_out) + backbone_acts
+    # z = layer.upproj(side_out) + backbone_acts
+    z = backbone_acts.unsqueeze(0)
+    z = detnorm(z)
     # print("outlayer", layer.detlayer, z.shape)
     return (z,)
 
@@ -250,8 +268,10 @@ cfg.vocab_size = 1
 mod = Qwen3ForCausalLM(cfg)
 for p in mod.model.embed_tokens.parameters(): p.requires_grad=False
 
-mod.lm_head = loadlmhead()
+mod.lm_head, detnorm = loadlmhead()
+detnorm = detnorm.to(dev)
 for p in mod.lm_head.parameters(): p.requires_grad=False
+for p in detnorm.parameters(): p.requires_grad=False
 # for n,p in mod.named_parameters(): print(n,p.size())
 # print("lmhead", mod.lm_head)
 
@@ -359,6 +379,7 @@ with open(args.activs_txt, "r") as futt:
         losses.append( loss.item() )
         #
         print("loss : ",loss.item())
+        exit()
         res += f"loss {loss.item()}\n"
         loss.backward()
         opt.step()
