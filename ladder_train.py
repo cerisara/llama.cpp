@@ -34,16 +34,17 @@ lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensoris"
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
 lmheadfich = "/home/xtof/nvme/qwen2.5-72B_lmhead.safetensors"
-layer_prefix = "lm_head."
-
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775/model.safetensors"
 layer_prefix = "model.embed_tokens."
+
+lmheadfich = "/home/data/qwen2.5-instruct-00037-of-00037.safetensors"
+layer_prefix = "lm_head."
 norm_prefix = "model.norm."
 ldim = 1024
 
 #
-dev = "cuda"
 dev = "cpu"
+dev = "cuda"
 
 model_path_state_dict = 'model_ladder_state_dict.pth'
 optim_path_state_dict = 'optim_state_dict.pth'
