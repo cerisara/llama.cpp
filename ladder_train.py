@@ -30,12 +30,14 @@ lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-
 layer_prefix = "model.embed_tokens."
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensoris"
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
+lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775/model.safetensors"
 layer_prefix = "lm_head."
+layer_prefix = "model.embed_tokens."
 ldim = 1024
 
 #
-dev = "cpu"
 dev = "cuda"
+dev = "cpu"
 
 model_path_state_dict = 'model_ladder_state_dict.pth'
 optim_path_state_dict = 'optim_state_dict.pth'
@@ -50,7 +52,7 @@ def loadlmhead():
     weights = {}
     with safe_open(lmheadfich, framework="pt", device="cpu") as f:
         for key in f.keys():
-            # print("loadkey",key)
+            print("loadkey",key)
             if key.startswith(layer_prefix):
                 k = key.replace(layer_prefix, "")
                 weights[k] = f.get_tensor(key)
@@ -80,7 +82,7 @@ def readTens():
         #
         activs_buffers.append( [] )
 
-    # print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
+    print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
 
     while nb_to_load > 0:
 
@@ -141,7 +143,8 @@ def myhookfin(layer, input, output):
     side_out = output[0]
     # on change la RS dim pour revenir a la dim du backbone !
     # il ne faut pas de norm apres cela...
-    z = layer.upproj(side_out) + backbone_acts
+    # z = layer.upproj(side_out) + backbone_acts
+    z = backbone_acts.unsqueeze(0)
     # print("outlayer", layer.detlayer, z.shape)
     return (z,)
 
