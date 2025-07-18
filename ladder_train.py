@@ -15,6 +15,19 @@ from safetensors.torch import save_file, safe_open
 import struct
 import datetime
 import os
+#
+import argparse
+#
+parser: argparse.ArgumentParser = argparse.ArgumentParser()
+#
+parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument("--skip_save_model", default=False, action="store_true")
+parser.add_argument("--skip_save_opt", default=False, action="store_true")
+parser.add_argument("--activs_bin", type=str, default="activs.bin")
+parser.add_argument("--activs_txt", type=str, default="activs.txt")
+parser.add_argument("--out_log", type=str)
+#
+args: argparse.Namespace = parser.parse_args()
 
 #
 time2: float = time.time()
@@ -32,6 +45,7 @@ lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruc
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
 layer_prefix = "lm_head."
 ldim = 1024
+lr: float = args.lr
 
 #
 dev = "cpu"
@@ -103,6 +117,11 @@ def readTens():
                 v = struct.unpack(fmt1, buffer)
                 activs_buffers[i_activ].append(v)
     
+    #
+    if nb_to_load < 0:
+        #
+        raise UserWarning(f"Error : nb_to_load is negative !!!!!!! nb_to_load={nb_to_load}")
+
     #
     for i_activ in range(nb_activations):
         #
@@ -196,14 +215,14 @@ print(time_log)
 
 
 #
-with open("activs.txt", "r", encoding="utf-8")  as f:
+with open(args.activs_txt, "r", encoding="utf-8")  as f:
     #
     first_line = f.readline()
     #
     nb_to_load = len(first_line.split(" "))
 
 
-facts = open("activs.bin","rb")
+facts = open(args.activs_bin,"rb")
 x = readTens()
 ntoks, bdim = x.size()
 facts.close()
@@ -211,7 +230,7 @@ facts.close()
 #
 time4: float = time.time()
 #
-time_log = f"Time pre open activs.txt : {time4-time3} secs\n"
+time_log = f"Time pre open {args.activs_txt} : {time4-time3} secs\n"
 #
 res += time_log
 print(time_log)
@@ -258,7 +277,10 @@ def finalnorm(h, *a, **b):
 mod.model.norm.forward = finalnorm
 
 #
-opt = torch.optim.AdamW(mod.parameters(), lr=0.0001)
+mod = mod.to(dev)
+
+#
+opt = torch.optim.AdamW(mod.parameters(), lr=lr)
 
 #
 if os.path.exists(model_path_state_dict):
@@ -284,7 +306,7 @@ print("nb params : ",nparms)
 
 floss = torch.nn.CrossEntropyLoss()
 #
-facts = open("activs.bin","rb")
+facts = open(args.activs_bin,"rb")
 
 #
 time5: float = time.time()
@@ -294,9 +316,11 @@ time_log = f"Time load model : {time5-time4} secs\n"
 res += time_log
 print(time_log)
 
+#
+losses: list[float] = []
 
 #
-with open("activs.txt", "r") as futt: 
+with open(args.activs_txt, "r") as futt: 
     ss = futt.readlines()
     for num_line, s in enumerate(ss):
         
@@ -332,6 +356,8 @@ with open("activs.txt", "r") as futt:
         gold = torch.LongTensor(toks[1:]).to(dev)
         loss = floss(y.logits[0,:-1], gold)
         #
+        losses.append( loss.item() )
+        #
         print("loss : ",loss.item())
         res += f"loss {loss.item()}\n"
         loss.backward()
@@ -345,24 +371,47 @@ with open("activs.txt", "r") as futt:
         res += time_log
         print(time_log)
 
-
 #
 facts.close()
 
+#
+fmil: float = min(losses)
+fmal: float = max(losses)
+fsl: float = sum(losses)
+fal: float = fsl / len(losses)
+#
+rmil: str = f"\nFinal min loss : {fmil}\n"
+rmal: str = f"\nFinal max loss : {fmal}\n"
+rsl: str = f"\nFinal sum loss : {fsl}\n"
+rl1: str = f"\nFinal average loss : {fal}\n"
+#
+rrls: str = rmil + rmal + rsl + rl1
+#
+res += rrls
+print(rrls)
+
 
 # --- Saving only the state_dict ---
-torch.save(mod.state_dict(), model_path_state_dict)
-print(f"\nModel state_dict saved to {model_path_state_dict}")
+if not args.skip_save_model:
+    #
+    torch.save(mod.state_dict(), model_path_state_dict)
+    print(f"\nModel state_dict saved to {model_path_state_dict}")
 
 
 # --- Saving optimizer state dict ---
-torch.save(opt.state_dict(), optim_path_state_dict)
-print(f"\nOptim state_dict saved to {optim_path_state_dict}")
+if not args.skip_save_opt:
+    #
+    torch.save(opt.state_dict(), optim_path_state_dict)
+    print(f"\nOptim state_dict saved to {optim_path_state_dict}")
 
 
 # --- Saving log files ---
 # res_file_name: str = f"res_log_{get_timestamp_with_milliseconds_for_filename()}.txt"
-res_file_name: str = "res_log_ladder_activations_training.txt"
+res_file_name: str = f"res_log_ladder_activations_training_lr_{lr}.txt"
+#
+if args.out_log is not None:
+    #
+    res_file_name = args.out_log
 #
 with open(res_file_name, "w", encoding="utf-8") as f:
     #
