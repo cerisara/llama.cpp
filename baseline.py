@@ -3,6 +3,7 @@ import numpy
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 modnom = "Qwen/Qwen2.5-0.5B-Instruct"
+modnom = "Qwen/Qwen3-0.6B"
 dev = "cuda"
 dev = "cpu"
 
@@ -27,4 +28,4 @@ with open("activs.txt", "r") as futt:
         gold = torch.LongTensor(toks[1:]).to(dev)
         loss = floss(y.logits[0,:-1], gold)
         print("loss : ",loss.item())
-
+        exit()
