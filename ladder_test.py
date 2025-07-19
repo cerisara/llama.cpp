@@ -9,7 +9,6 @@ import torch
 import numpy
 #
 from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
-from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from safetensors.torch import save_file, safe_open
 #
@@ -21,15 +20,11 @@ import argparse
 #
 parser: argparse.ArgumentParser = argparse.ArgumentParser()
 #
-parser.add_argument('--lr', type=float, default=1e-4)
-parser.add_argument("--skip_save_model", default=False, action="store_true")
-parser.add_argument("--skip_save_opt", default=False, action="store_true")
 parser.add_argument("--activs_bin", type=str, default="activs.bin")
 parser.add_argument("--activs_txt", type=str, default="activs.txt")
 parser.add_argument("--out_log", type=str)
 #
 args: argparse.Namespace = parser.parse_args()
-
 
 #
 time2: float = time.time()
@@ -42,24 +37,17 @@ print(time_log)
 #
 modnom = "Qwen/Qwen3-0.6B"
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-Math-1.5B-Instruct/snapshots/aafeb0fc6f22cbf0eaeed126eff8be45b0360a35/model.safetensors"
+layer_prefix = "model.embed_tokens."
 lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/model-00004-of-00004.safetensoris"
 lmheadfich = "/home/data/qwen2.5-72B_lmhead.safetensors"
-lmheadfich = "/home/xtof/nvme/qwen2.5-72B_lmhead.safetensors"
-lmheadfich = "/home/xtof/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775/model.safetensors"
-layer_prefix = "model.embed_tokens."
-
-lmheadfich = "/home/data/qwen2.5-instruct-00037-of-00037.safetensors"
 layer_prefix = "lm_head."
-norm_prefix = "model.norm."
 ldim = 1024
-lr: float = args.lr
 
 #
-dev = "cuda"
 dev = "cpu"
+dev = "cuda"
 
 model_path_state_dict = 'model_ladder_state_dict.pth'
-optim_path_state_dict = 'optim_state_dict.pth'
 
 nb_to_load: int = 0
 
@@ -67,26 +55,19 @@ activations: list[torch.Tensor] = []
 nb_activations: int = 4
 current_activation: int = 4
 
-def loadBackBoneLMhead():
+def loadlmhead():
     weights = {}
-    wnorm = {}
     with safe_open(lmheadfich, framework="pt", device="cpu") as f:
         for key in f.keys():
-            print("loadkey",key)
+            # print("loadkey",key)
             if key.startswith(layer_prefix):
                 k = key.replace(layer_prefix, "")
                 weights[k] = f.get_tensor(key)
                 v,d = weights[k].size()
-            elif key.startswith(norm_prefix):
-                k = key.replace(norm_prefix, "")
-                wnorm[k] = f.get_tensor(key)
-                ss = wnorm[k].size()
     # print("loadhead",d,v)
     l = torch.nn.Linear(d, v, bias=False)
     l.load_state_dict(weights)
-    ln = Qwen2RMSNorm(ss[0],1e-06)
-    ln.load_state_dict(wnorm)
-    return l,ln
+    return l
 
 def readTens():
     global facts, nb_to_load, activations, current_activation, nb_activations
@@ -108,7 +89,7 @@ def readTens():
         #
         activs_buffers.append( [] )
 
-    print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
+    # print(f"\nDEBUG | readTensor | nb_to_load = {nb_to_load} | current_activation = {current_activation} | nb_activations = {nb_activations}")
 
     while nb_to_load > 0:
 
@@ -131,11 +112,6 @@ def readTens():
                 v = struct.unpack(fmt1, buffer)
                 activs_buffers[i_activ].append(v)
     
-    #
-    if nb_to_load < 0:
-        #
-        raise UserWarning(f"Error : nb_to_load is negative !!!!!!! nb_to_load={nb_to_load}")
-
     #
     for i_activ in range(nb_activations):
         #
@@ -170,21 +146,11 @@ def myhook(layer, input, output):
     o[0] = z
     return o
  
-def myhookreduce(layer, input, output):
-    o = list(output)
-    backbone_acts = readTens() # T x D
-    backbone_acts = torch.mean(backbone_acts, 0)
-    x = layer.downproj(backbone_acts)
-    o[0] = o[0] + x
-    return o
- 
 def myhookfin(layer, input, output):
     side_out = output[0]
     # on change la RS dim pour revenir a la dim du backbone !
     # il ne faut pas de norm apres cela...
-    # z = layer.upproj(side_out) + backbone_acts
-    z = backbone_acts.unsqueeze(0)
-    z = layer.detnorm(z)
+    z = layer.upproj(side_out) + backbone_acts
     # print("outlayer", layer.detlayer, z.shape)
     return (z,)
 
@@ -229,70 +195,7 @@ def get_iso_timestamp_for_filename():
     now = datetime.datetime.now()
     return now.isoformat(sep='_', timespec='seconds').replace(':', '-')
 
-def delfinalnorm(h, *a, **b):
-    # supprime la derniere norm (sinon, pb de dim)
-    return h
 
-def createLadderPretrained():
-    mod = Qwen3ForCausalLM.from_pretrained(modnom)
-    nl = mod.config.num_hidden_layers
-    print("pretrained ladder", nl)
-    # for n,p in mod.named_parameters(): print(n,p.shape)
-    # for p in mod.model.embed_tokens.parameters(): p.requires_grad=False
-    dproj = torch.nn.Linear(bdim, ldim, bias=False)
-    with torch.no_grad():
-        dproj.weight.data = dproj.weight.data * 0.
-    # TODO: pretrain dproj pour projeter les backbone-embed sur les ladder-embed
-    for i in range(nb_activations):
-        mod.model.layers[i].detlayer = i
-        mod.model.layers[i].downproj = dproj
-        mod.model.layers[i].register_forward_hook(myhookreduce)
-    # dans cette version, je ne combine pas le backbone et la ladder a la fin !
-    mod.keepEmbeds=True
-    return mod
-
-def createLadderRandom():
-    cfg = AutoConfig.from_pretrained(modnom)
-    cfg.max_window_layers = 4
-    cfg.num_hidden_layers = 4
-    # cfg.head_dim = 64
-    cfg.layer_types = ["full_attention"]*4
-    cfg.bos_token_id = 0
-    cfg.eos_token_id = 0
-    cfg.vocab_size = 1
-    # print(cfg)
-
-    mod = Qwen3ForCausalLM(cfg)
-    for p in mod.model.embed_tokens.parameters(): p.requires_grad=False
-
-    mod.lm_head, detnorm = loadBackBoneLMhead()
-    detnorm = detnorm.to(dev)
-    for p in mod.lm_head.parameters(): p.requires_grad=False
-    for p in detnorm.parameters(): p.requires_grad=False
-    # for n,p in mod.named_parameters(): print(n,p.size())
-    # print("lmhead", mod.lm_head)
-
-    dproj = torch.nn.Linear(bdim, ldim)
-    mod.model.embed_tokens.downproj = dproj
-    mod.model.embed_tokens.register_forward_hook(myhookemb)
-
-    for i in range(3):
-        mod.model.layers[i].detlayer = i
-        dproj = torch.nn.Linear(bdim, ldim)
-        mod.model.layers[i].downproj = dproj
-        mod.model.layers[i].register_forward_hook(myhook)
-    for i in (3,):
-        mod.model.layers[i].detlayer = i
-        uproj = torch.nn.Linear(ldim, bdim)
-        mod.model.layers[i].upproj = uproj
-        mod.model.layers[i].detnorm = detnorm
-        mod.model.layers[i].register_forward_hook(myhookfin)
-
-    mod.model.norm.forward = delfinalnorm
-    mod = mod.to(dev)
-    mod.keepEmbeds=False
-    return mod
- 
 #
 time3: float = time.time()#
 time_log = f"Time functions init : {time3-time2} secs\n"
@@ -322,25 +225,56 @@ time_log = f"Time pre open {args.activs_txt} : {time4-time3} secs\n"
 res += time_log
 print(time_log)
 
-mod = createLadderRandom()
-# mod = createLadderPretrained()
-if mod.keepEmbeds: toker = AutoTokenizer.from_pretrained(modnom)
-
-opt = torch.optim.AdamW(mod.parameters(), lr=lr)
 
 #
-if False and os.path.exists(model_path_state_dict):
+cfg = AutoConfig.from_pretrained(modnom)
+cfg.max_window_layers = 4
+cfg.num_hidden_layers = 4
+# cfg.head_dim = 64
+cfg.layer_types = ["full_attention"]*4
+cfg.bos_token_id = 0
+cfg.eos_token_id = 0
+cfg.vocab_size = 1
+# print(cfg)
+
+mod = Qwen3ForCausalLM(cfg)
+for p in mod.model.embed_tokens.parameters(): p.requires_grad=False
+
+mod.lm_head = loadlmhead()
+for p in mod.lm_head.parameters(): p.requires_grad=False
+# for n,p in mod.named_parameters(): print(n,p.size())
+# print("lmhead", mod.lm_head)
+
+dproj = torch.nn.Linear(bdim, ldim)
+mod.model.embed_tokens.downproj = dproj
+mod.model.embed_tokens.register_forward_hook(myhookemb)
+
+for i in range(3):
+    mod.model.layers[i].detlayer = i
+    dproj = torch.nn.Linear(bdim, ldim)
+    mod.model.layers[i].downproj = dproj
+    mod.model.layers[i].register_forward_hook(myhook)
+for i in (3,):
+    mod.model.layers[i].detlayer = i
+    uproj = torch.nn.Linear(ldim, bdim)
+    mod.model.layers[i].upproj = uproj
+    mod.model.layers[i].register_forward_hook(myhookfin)
+
+def finalnorm(h, *a, **b):
+    # supprime la derniere norm (sinon, pb de dim)
+    return h
+
+mod.model.norm.forward = finalnorm
+
+#
+mod = mod.to(dev)
+
+#
+if os.path.exists(model_path_state_dict):
     #
     loaded_state_dict = torch.load(model_path_state_dict)
     mod.load_state_dict(loaded_state_dict)
     print(f"Model state_dict loaded into new model instance from {model_path_state_dict}")
-
-#
-if False and os.path.exists(optim_path_state_dict):
-    #
-    loaded_state_dict = torch.load(optim_path_state_dict)
-    opt.load_state_dict(loaded_state_dict)
-    print(f"Optim state_dict loaded into new optimizer instance from {optim_path_state_dict}")
 
 #
 mod = mod.to(dev)
@@ -365,7 +299,7 @@ print(time_log)
 #
 losses: list[float] = []
 
-with open("tt.txt", "r") as ftxt: txtlines = ftxt.readlines()
+#
 with open(args.activs_txt, "r") as futt: 
     ss = futt.readlines()
     for num_line, s in enumerate(ss):
@@ -380,7 +314,6 @@ with open(args.activs_txt, "r") as futt:
         time6: float = time.time()
 
         #
-        opt.zero_grad()
         toks = [int(x) for x in s.split(" ")]
         #
         print("nb tokens ", len(toks)) #, s)
@@ -389,32 +322,23 @@ with open(args.activs_txt, "r") as futt:
         current_activation = nb_activations
         res += f"utt {len(toks)}, {s}\n"
         #
-        if mod.keepEmbeds:
-            intoks = toker.encode(txtlines[num_line])
-            print('retokenize', len(intoks))
-            # print('\n'.join([str(x)+" "+str(y) for x,y in zip(toks, intoks)]))
-        else: intoks = [0]*len(toks)
+        intoks = [0]*len(toks)
         x = {'input_ids': torch.LongTensor(intoks).view(1,-1).to(dev) }
         #
         # print(f"\n\nDEBUG | x['input_ids'].shape = {x['input_ids'].shape}\n\n")
         #
         y = mod(**x)
-        logits = y.logits
-
         #
-        # print("out logits shape : ",logits.shape)
+        # print("out logits shape : ",y.logits.shape)
         #
-        res += f"out {logits.shape}\n"
+        res += f"out {y.logits.shape}\n"
         gold = torch.LongTensor(toks[1:]).to(dev)
-        loss = floss(logits[0,:-1], gold)
+        loss = floss(y.logits[0,:-1], gold)
         #
         losses.append( loss.item() )
         #
         print("loss : ",loss.item())
-        exit()
         res += f"loss {loss.item()}\n"
-        loss.backward()
-        opt.step()
 
         #
         time7: float = time.time()
@@ -444,23 +368,9 @@ res += rrls
 print(rrls)
 
 
-# --- Saving only the state_dict ---
-if not args.skip_save_model:
-    #
-    torch.save(mod.state_dict(), model_path_state_dict)
-    print(f"\nModel state_dict saved to {model_path_state_dict}")
-
-
-# --- Saving optimizer state dict ---
-if not args.skip_save_opt:
-    #
-    torch.save(opt.state_dict(), optim_path_state_dict)
-    print(f"\nOptim state_dict saved to {optim_path_state_dict}")
-
-
 # --- Saving log files ---
 # res_file_name: str = f"res_log_{get_timestamp_with_milliseconds_for_filename()}.txt"
-res_file_name: str = f"res_log_ladder_activations_training_lr_{lr}.txt"
+res_file_name: str = f"res_log_ladder_activations_testing.txt"
 #
 if args.out_log is not None:
     #

@@ -17628,8 +17628,14 @@ static void ggml_compute_forward_opt_step_adamw(
 }
 /////////////////////////////////
 
+pthread_mutex_t lock;
+int islockcreated = 0;
+int nthrpassed[100];
+
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
+
+    // printf("\nOOPnode %s %s\n", tensor->name, ggml_op_name(tensor->op));
 
     if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
         return;
@@ -17985,7 +17991,91 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 GGML_ABORT("fatal error");
             }
     }
+    const char* detsave = getenv("DETSAVE");
+    const char* detdbug = getenv("DETDBUG");
+    const char* detadd = getenv("DETADD");
+    float addact[100][15000];
+    if (detadd!=NULL) {
+        FILE *f = fopen("/tmp/ttt","r");
+        int l,d;
+        float v;
+        while (!feof(f)) {
+            fscanf(f,"%d %d %f\n",&l,&d,&v);
+            addact[l][d]=v;
+        }
+        fclose(f);
+    }
+    if (detsave!=NULL || detadd!=NULL) {
+        if (detdbug!=NULL) printf("OPnode %s\n", tensor->name);
+        if (tensor->name[0]=='l' && tensor->name[1]=='_') { // l_out == last op in a layer
+            if (islockcreated==0 && params->ith==0) {
+                // je cree le lock seulement avec le thread 0 (le lock ne sera utilise que quand tous les threads seront passes de toute maniere)
+                // je ne veux pas que les autres threads sauvent dans le meme fichier en meme temps;
+                // ca ne devrait pas arriver car on sauve quand tous les threads sont passes, mais bon...
+                if (detdbug!=NULL) printf("creating lock\n");
+                if (pthread_mutex_init(&lock, NULL) != 0) {
+                    printf("\n mutex init has failed\n");
+                }
+                islockcreated=1;
+            }
+
+            int layer = atoi(&tensor->name[6]);
+            // section critique
+            pthread_mutex_lock(&lock);
+            if (++nthrpassed[layer]==params->nth) {
+                // tous les threads sont passes ici, je peux sauver...
+                // bug possible si 2 threads finissent 2 layers differentes ?
+                nthrpassed[layer]=0;
+                float *detv = (float *)tensor->data;
+                int ntoks = tensor->ne[0];
+                int vecdim = tensor->ne[1];
+                int chanout = tensor->ne[2];
+                int chanin = tensor->ne[3];
+                if (detdbug!=NULL) printf("save %s ntoks=%d vdim=%d\n",tensor->name,ntoks,vecdim);
+                if (detadd!=NULL) {
+                    printf("detadd %d\n",layer);
+                    // TODO: check that the starting pos of the last vector is this one:
+                    int pos = (ntoks-1)*vecdim*chanout*chanin;
+                    for (int i=0;i<vecdim;i++) detv[pos+i] = detv[pos+i] + addact[layer][i];
+                    // DEBUG
+                    for (int i=0;i<ntoks*vecdim*chanout*chanin;i++) detv[i]=0.;
+                }
+                if (detsave!=NULL) {
+                    FILE *f = fopen("acts.bin","ab");
+                    fwrite(&layer,sizeof(int),1,f);
+                    fwrite(&ntoks,sizeof(int),1,f);
+                    fwrite(&vecdim,sizeof(int),1,f);
+                    fwrite(&chanout,sizeof(int),1,f);
+                    fwrite(&chanin,sizeof(int),1,f);
+                    fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
+                    fclose(f);
+                }
+            }
+            pthread_mutex_unlock(&lock);
+        } else if (strcmp(tensor->name,"inp_embd")==0) {
+            int ntoks = tensor->ne[0];
+            int vecdim = tensor->ne[1];
+            int chanout = tensor->ne[2];
+            int chanin = tensor->ne[3];
+            float *detv = (float *)tensor->data;
+            if (params->ith==0) {
+                if (detdbug!=NULL) printf("INEMBED %d %d %d %d %d %d %f %f\n",params->ith, params->nth, ntoks, vecdim, chanout, chanin, detv[0], detv[1]);
+                // I assume that embeddings are the same for all threads, so I just save the first thread
+                if (detsave!=NULL) {
+                    FILE *f = fopen("embeds.bin","ab");
+                    fwrite(&ntoks,sizeof(int),1,f);
+                    fwrite(&vecdim,sizeof(int),1,f);
+                    fwrite(&chanout,sizeof(int),1,f);
+                    fwrite(&chanin,sizeof(int),1,f);
+                    fwrite(detv,sizeof(float),ntoks*vecdim*chanout*chanin,f);
+                    fclose(f);
+                }
+            }
+        }
+    }
 }
+// note que apres le 1er token genere, il cache tous les tokens de la 1ere passe et d'en genere plus qu'un seul
+// aussi, il passe 4 fois dans le meme node (donc il ne faudrait pas l'enregistrer 4 fois...)
 
 ////////////////////////////////////////////////////////////////////////////////
 
