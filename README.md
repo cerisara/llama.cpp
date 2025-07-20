@@ -10,8 +10,21 @@ elle accumule dans le fichier "activs.bin" les activations en sortie de ces node
 - dim du vecteur (int)
 - le vecteur d'activation (dim floats)
 
+-------------------------
 
+# murder mystery
 
+- musr1.py convertit les data d'origine en prompts demandant un raisonnement par coupable
+- musr1.sh génère les raisonnements sur JZ
+- musr1b.sh copie les raisonnements sur lully
+- musr2.py génère les questions: quel raisonnement est le bon ?
+- musr2.sh genere les reponses a ces questions (== BASELINE acc)
+- musr2a.py calcule l'accuracy de cette baseline (acc=58% avec qw2.5-7b)
+- musr2b.py train un qlora sur les 50 premieres phrases et calcule l'accuracy (acc=59.5% avec qw2.5-7b)
+    - musr2ba.sh copie les data sur JZ
+    - musr2b.slurm lance musr2b.py sur JZ
+- musr3.sh genere les activs.bin pour preparer le ladder train
+- musr5.py train et teste la ladder
 
 -------------------------
 
