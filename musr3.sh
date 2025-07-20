@@ -5,13 +5,14 @@
 # python getdata.py > frinstr.txt
 
 modnom="/home/xtof/models/Qwen3-14B-Q4_K_M.gguf"
+modnom="/home/xtof/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
 
 rm -f layers2save
 touch layers2save
 echo 'l_out-10' >> layers2save
 echo 'l_out-20' >> layers2save
-echo 'l_out-30' >> layers2save
-echo 'l_out-39' >> layers2save
+echo 'l_out-25' >> layers2save
+echo 'l_out-31' >> layers2save
 
 find /home/xtof/llamacppgerg/qwen3_14b/ok -type f > txtlist.txt
 echo 0 | awk '{for (i=0;i<250;i++) print "/home/xtof/llamacppgerg/qwen3_14b/ok/out."i}' > txtlist.txt
