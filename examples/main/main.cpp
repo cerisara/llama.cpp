@@ -232,7 +232,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 			break;
 		}
 
-		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+		printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
 			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 				if (!ggml_is_quantized(t->type)) {
