@@ -3,13 +3,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <semaphore.h>
 #include <unistd.h>
-#include <sys/eventfd.h>
 #include <iostream>
 #include <cstring>
 
 static const char* SHM_NAME = "/ring_buffer_demo";
-static const char* FD_FILE  = "/dev/shm/ring_buffer_fds";
+static const char* SEM_C2P = "/c2py_sem";
+static const char* SEM_P2C = "/py2c_sem";
 
 static const size_t N = 8;
 static const size_t ITER = 10;
@@ -19,57 +20,48 @@ struct SharedMemory {
 };
 
 int main() {
-    size_t size = sizeof(SharedMemory);
-
     // Create shared memory
     int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    ftruncate(fd, size);
-
-    void* addr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ftruncate(fd, sizeof(SharedMemory));
+    void* addr = mmap(nullptr, sizeof(SharedMemory),
+                      PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     auto* shm = reinterpret_cast<SharedMemory*>(addr);
 
-    // Create eventfds
-    int ev_c2py = eventfd(0, EFD_SEMAPHORE);
-    int ev_py2c = eventfd(0, EFD_SEMAPHORE);
+    // Create semaphores
+    sem_t* sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
+    sem_t* sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
 
-    // Store eventfd numbers in a small file so python can read them
-    FILE* f = fopen(FD_FILE, "w");
-    fprintf(f, "%d %d", ev_c2py, ev_py2c);
-    fclose(f);
-
-    // Main loop
     for (size_t it = 0; it < ITER; ++it) {
         size_t b = it % 2;
 
-        // Fill data
+        // Fill buffer
         for (size_t i = 0; i < N; ++i)
             shm->buffers[b][i] = i + it * 1000.0f;
 
-        std::cout << "[C++] send iter " << it << " buf " << b << ": ";
+        std::cout << "[C++] Sending buffer " << b << ": ";
         for (size_t i = 0; i < N; ++i) std::cout << shm->buffers[b][i] << " ";
         std::cout << "\n";
 
         // Notify Python
-        uint64_t one = 1;
-        write(ev_c2py, &one, sizeof(one));
+        sem_post(sem_c2p);
 
-        std::cout << "OK1\n";
-        // Wait for Python → C++
-        uint64_t val;
-        read(ev_py2c, &val, sizeof(val));
-        std::cout << "OK2\n";
+        // Wait for Python to process
+        sem_wait(sem_py2c);
 
-        std::cout << "[C++] recv iter " << it << " buf " << b << ": ";
+        std::cout << "[C++] Received buffer " << b << ": ";
         for (size_t i = 0; i < N; ++i) std::cout << shm->buffers[b][i] << " ";
         std::cout << "\n";
     }
 
-    munmap(addr, size);
+    // Cleanup
+    munmap(addr, sizeof(SharedMemory));
     close(fd);
     shm_unlink(SHM_NAME);
-    unlink(FD_FILE);
+    sem_close(sem_c2p);
+    sem_close(sem_py2c);
+    sem_unlink(SEM_C2P);
+    sem_unlink(SEM_P2C);
 
     return 0;
 }
-
 
