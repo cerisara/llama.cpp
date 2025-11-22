@@ -24,7 +24,7 @@ def loadEmbeddingMatrix():
         print(f"An error occurred: {e}")
     return None
 
-E = loadEmbeddingMatrix()
+E = None
 
 # Open shared memory
 fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
@@ -58,10 +58,14 @@ while True:
         # Wait for C++ to fill buffer
         sem_c2p.acquire()
         arr = get_buffer_view()
-    # on modifie la derniere layer = result_norm, le dernier embedding
-    print("debug",arr.shape,E.shape)
-    arr[-1][:] = E[1000][:]
+        if i==2 and E!=None: arr[-1][:] = E[1000][:]
+        sem_py2c.release()
 
-    # Notify C++
-    sem_py2c.release()
+    if E==None:
+        # on charge encore les embeddings
+        sem_c2p.acquire()
+        E = get_buffer_view()
+        sem_py2c.release()
+        print("embed",E.shape)
+
 
