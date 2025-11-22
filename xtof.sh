@@ -13,11 +13,8 @@ echo 'l_out-10' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'result_norm' >> layers2save
 
-echo "After the number 5 is number " > toto.txt
+echo "What comes after 5? Answer: " > toto.txt
 tf="toto.txt"
-
-rm -f activs.txt activs.bin
-touch activs.txt
 
 while IFS="" read -r p || [ -n "$p" ]
 do
