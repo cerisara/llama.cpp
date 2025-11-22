@@ -221,11 +221,11 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 	for (int i=0;i<1000;i++) {
 		if (detsavelayer[i]==NULL) break;
 
-		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+		printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
 			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 				if (!ggml_is_quantized(t->type)) {
-					// printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
+					printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
 					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
 					detson_save_tensor(data, t->type, t->ne, t->nb);
 				}
@@ -354,6 +354,8 @@ int main(int argc, char ** argv) {
 			strcpy(detsavelayer[j++],line);
         }
         fclose(f);
+		detsavelayer[j]= (char *)malloc(sizeof(char)*strlen("result_norm"));
+		strcpy(detsavelayer[j++],"result_norm");
     }
  
     llama_model * model = nullptr;
