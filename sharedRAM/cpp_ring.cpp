@@ -50,7 +50,7 @@ int main() {
             std::cout << shm->buffers[b][i] << " ";
         std::cout << "\n";
 
-        // Mark C→Python ready
+        // Mark C→ Python ready
         shm->c_to_py_flag[b].store(1, std::memory_order_release);
 
         // Wait for Python

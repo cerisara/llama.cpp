@@ -51,8 +51,6 @@ for it in range(ITER):
 
     # Mark result ready for C++
     write_int(offset_p2c + b*INT_SZ, 1)
-    write_int(offset_c2p + b*INT_SZ, 0)  # reset C→PY flag
+    write_int(offset_c2p + b*INT_SZ, 0)  # reset C→ PY flag
 
-mm.close()
-os.close(fd)
 
