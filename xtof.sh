@@ -11,7 +11,7 @@ touch layers2save
 echo 'l_out-10' >> layers2save
 # echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
-# llamacpp sauvegardera aussi toujours la sortie de la last layer apres la normalisation
+echo 'result_norm' >> layers2save
 
 echo "After the number 5 is number " > toto.txt
 tf="toto.txt"

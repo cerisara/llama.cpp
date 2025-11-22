@@ -27,6 +27,24 @@
 #include <signal.h>
 #endif
 
+// detson semaphore to communicate with python
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <semaphore.h>
+#include <unistd.h>
+#include <iostream>
+#include <cstring>
+static const char* SHM_NAME = "/ring_buffer_demo";
+static const char* SEM_C2P = "/c2py_sem";
+static const char* SEM_P2C = "/py2c_sem";
+struct SharedMemory {
+    float buffers[1][1000000];
+};
+SharedMemory *shm;
+sem_t* sem_c2p;
+sem_t* sem_py2c;
+
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
@@ -141,35 +159,26 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
 }
  
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
-
     float sum = 0;
 
-    FILE *fdet = fopen("activs.bin","ab");
-
-    std::cout << "NDEBUG | ne[3] = " << ne[3] << "\n";
-
+	// Fill buffer
+	int bufidx = 0;
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
-
-        std::cout << "NDEBUG | ne[2] = " << ne[2] << "\n";
-
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
-
             int32_t val = ne[1];
-	    fwrite(&val,sizeof(int32_t),1,fdet);
-	    std::cout << "NDEBUG | ne[1] = " << val << "\n";
-
-	    for (int64_t i1 = 0; i1 < ne[1]; i1++) {
-
-		int32_t val2 = ne[0];
-	  	fwrite(&val2,sizeof(int32_t),1,fdet);
-		// std::cout << "NDEBUG | ne[0] = " << val2 << "\n"; // -> 8192 for everyone
-
-		for (int64_t i0 = 0; i0 < ne[0]; i0++) {
-
+			if (i3==0 && i2==0) {
+				shm->buffers[0][bufidx++] = float(val);
+			}
+			for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+				int32_t val2 = ne[0];
+				if (i3==0 && i2==0 && i1==0) {
+					printf("detne %d %d\n",val,val2);
+					shm->buffers[0][bufidx++] = float(val2);
+				}
+				for (int64_t i0 = 0; i0 < ne[0]; i0++) {
                     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
                     float v;
-
-		    if (type == GGML_TYPE_F16) {
+					if (type == GGML_TYPE_F16) {
                         v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
                     } else if (type == GGML_TYPE_F32) {
                         v = *(float *) &data[i];
@@ -182,20 +191,23 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else {
                         GGML_ABORT("fatal error");
                     }
-
-		    fwrite(&v,sizeof(float),1,fdet);
-		    // printf("detson activ %d %d %d %d %f\n",i0,i1,i2,i3,v);
-
+					if (i0==0) {
+						// pour check en python que vector parse dans les bonnes dim
+						printf("vec %d %f\n",i1,v);
+					}
+					shm->buffers[0][bufidx++] = v;
                     sum += v;
-
-		}
+				}
             }
         }
     }
-
-    fclose(fdet);
-
-    // printf("detsum %f\n",sum);
+	std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
+	// Notify Python
+	sem_post(sem_c2p);
+	// Wait for Python to process
+	sem_wait(sem_py2c);
+	std::cout << "[C++] Received buffer\n";
+	// TODO: modify the activations from shm->buffers[0][i]
 }
  
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -285,6 +297,15 @@ bool readLinesFromFile(const std::string& filename, std::vector<std::string>& li
 
 
 int main(int argc, char ** argv) {
+	// Create shared memory
+	int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+	ftruncate(fd, sizeof(SharedMemory));
+	void* addr = mmap(nullptr, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	shm = reinterpret_cast<SharedMemory*>(addr);
+	// Create semaphores
+	sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
+	sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
+ 
     gpt_params params;
     g_params = &params;
     if (!gpt_params_parse(argc, argv, params, LLAMA_EXAMPLE_MAIN, print_usage)) {
@@ -354,8 +375,6 @@ int main(int argc, char ** argv) {
 			strcpy(detsavelayer[j++],line);
         }
         fclose(f);
-		detsavelayer[j]= (char *)malloc(sizeof(char)*strlen("result_norm"));
-		strcpy(detsavelayer[j++],"result_norm");
     }
  
     llama_model * model = nullptr;
