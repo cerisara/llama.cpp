@@ -20,6 +20,6 @@ while IFS="" read -r p || [ -n "$p" ]
 do
     rm -rf detlog
     mkdir detlog
-    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -n 1 # -fa -ngl 100
+    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -n 20 # -fa -ngl 100
 done < "$tf"
 

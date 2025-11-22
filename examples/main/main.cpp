@@ -225,6 +225,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);
 
     if (!is_host) {
+		printf("detwarn cannot modify activations on GPU!\n");
         auto n_bytes = ggml_nbytes(t);
         cb_data->data.resize(n_bytes);
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
@@ -233,13 +234,21 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 	for (int i=0;i<1000;i++) {
 		if (detsavelayer[i]==NULL) break;
 
-		printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
+		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
 			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 				if (!ggml_is_quantized(t->type)) {
 					printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
 					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
 					detson_save_tensor(data, t->type, t->ne, t->nb);
+					// debug: modify tensor
+					// OK ca marche, si on modifie ici, ca modifie l'output
+					/*
+					float *buf = (float *)t->data;
+					for (int i=0;i<1000;i++) {
+						buf[i] += 1.;
+					}
+					*/
 				}
 				break;
 			}
