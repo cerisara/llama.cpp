@@ -204,10 +204,6 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
 	std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
 	// Notify Python
 	sem_post(sem_c2p);
-	// Wait for Python to process
-	sem_wait(sem_py2c);
-	std::cout << "[C++] Received buffer\n";
-	// TODO: modify the activations from shm->buffers[0][i]
 }
  
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -232,7 +228,9 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     }
     
 	for (int i=0;i<1000;i++) {
-		if (detsavelayer[i]==NULL) break;
+		if (detsavelayer[i]==NULL) {
+			break;
+		}
 
 		// printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
@@ -250,7 +248,26 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 					}
 					*/
 				}
-				break;
+
+				if (!strncmp(t->name,"result_norm",strlen("result_norm"))) {
+					// der layer, on peut modifier le token output selon la ladder
+					// Wait for Python to process
+					sem_wait(sem_py2c);
+					if (shm->buffers[0][0]==42) {
+						// do not modify output
+					} else {
+						int bufidx = 2;
+						uint8_t * data = (uint8_t *) t->data;
+						for (int64_t i3 = 0; i3 < t->ne[3]; i3++) {
+							for (int64_t i2 = 0; i2 < t->ne[2]; i2++) {
+								for (int64_t i1 = 0; i1 < t->ne[1]; i1++) {
+									for (int64_t i0 = 0; i0 < t->ne[0]; i0++) {
+										size_t i = i3 * t->nb[3] + i2 * t->nb[2] + i1 * t->nb[1] + i0 * t->nb[0];
+										float *v = (float *) &data[i];
+										v[0] = shm->buffers[0][bufidx++];
+									}}}}
+					}
+				}
 			}
 		}
     }

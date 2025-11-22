@@ -33,10 +33,11 @@ def get_buffer_view():
     return vec
 
 while True:
-    # Wait for C++ to fill buffer
-    sem_c2p.acquire()
-    arr = get_buffer_view()
-    # TODO: modify arr in place and resend
+    # on charge 3 layers
+    for i in range(3):
+        # Wait for C++ to fill buffer
+        sem_c2p.acquire()
+        arr = get_buffer_view()
 
     # Notify C++
     sem_py2c.release()
