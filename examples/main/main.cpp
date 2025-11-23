@@ -158,7 +158,7 @@ static std::string chat_add_and_format(struct llama_model * model, std::vector<l
     return formatted;
 }
  
-static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
+static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
     float sum = 0;
 
 	// Fill buffer
@@ -206,8 +206,36 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
 	sem_post(sem_c2p);
 	sem_wait(sem_py2c);
 }
+ 
+static bool ggml_debug_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
+    if (ask) return true; // Always retrieve data
+    const struct ggml_tensor * src0 = t->src[0];
+ 
+	if (src0!=NULL && !strncmp(src0->name,"output.weight",13)) {
+		auto * cb_data = (callback_data *) user_data;
+		printf("saving embeddings\n");
+		uint8_t * data = (uint8_t *) src0->data;
+ 
+		// copy the data from the GPU memory if needed
+		const bool is_host = ggml_backend_buffer_is_host(src0->buffer);
+		if (!is_host) {
+			auto n_bytes = ggml_nbytes(src0);
+			cb_data->data.resize(n_bytes);
+			ggml_backend_tensor_get(src0, cb_data->data.data(), 0, n_bytes);
+			printf("ERROR quantized not implemented yet");
+		}
+    
+		if (!ggml_is_quantized(src0->type)) {
+			uint8_t * data = is_host ? (uint8_t *) src0->data : cb_data->data.data();
+			detson_save_tensor(data, src0->type, src0->ne, src0->nb);
+			printf("Embeddings saved; you can rerun the program!");
+			exit(1);
+		}
+		// TODO implement for quantized data
+    }
+    return true;
+}  
 
-int savedembed = 0;
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     // printf("detnode %s\n",t->name);
     auto * cb_data = (callback_data *) user_data;
@@ -219,7 +247,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 		printf("saving embeddings\n");
 		savedembed = 1;
 		uint8_t * data = (uint8_t *) t->data;
-		detson_save_tensor(data, t->type, t->ne, t->nb);
+		detson_send_tensor(data, t->type, t->ne, t->nb);
 	}
 
 	/*
@@ -255,7 +283,7 @@ static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
 				if (!ggml_is_quantized(t->type)) {
 					printf("detson save %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
 					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-					detson_save_tensor(data, t->type, t->ne, t->nb);
+					detson_send_tensor(data, t->type, t->ne, t->nb);
 					// debug: modify tensor
 					// OK ca marche, si on modifie ici, ca modifie l'output
 					/*
@@ -399,24 +427,34 @@ int main(int argc, char ** argv) {
 
     llama_backend_init();
     llama_numa_init(params.numa);
+    
 
     // detson debug
 	for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
     callback_data cb_data;
-    params.cb_eval = ggml_debug;
+ 	// detson save embeddings
+	FILE *f = fopen("detembeds.bin","rb");
+	if (f==NULL) {
+		params.cb_eval = ggml_debug_save_embeds;
+	} else {
+		params.cb_eval = ggml_debug;
+ 		fclose(f);
+	}
     params.cb_eval_user_data = &cb_data;
     params.warmup = false;
     {
         int j=0;
-        char line[10000];
-        FILE *f = fopen("layers2save","r");
-        while (fgets(line, sizeof(line), f) != NULL) {
-			line[strlen(line)-1]=0; // -1 because we remove \n
-			if (strlen(line)==0) break;
-            detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
-			strcpy(detsavelayer[j++],line);
-        }
-        fclose(f);
+		char line[10000];
+		FILE *f = fopen("layers2save","r");
+		if (f!=NULL) {
+			while (fgets(line, sizeof(line), f) != NULL) {
+				line[strlen(line)-1]=0; // -1 because we remove \n
+				if (strlen(line)==0) break;
+				detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
+				strcpy(detsavelayer[j++],line);
+			}
+			fclose(f);
+		}
     }
  
     llama_model * model = nullptr;
