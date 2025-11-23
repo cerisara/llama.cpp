@@ -6,6 +6,8 @@
 
 modnom="/home/xtof/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
+rm /dev/shm/sem.py2c_sem
+rm /dev/shm/sem.c2py_sem
 rm -f layers2save
 touch layers2save
 echo 'l_out-10' >> layers2save
@@ -20,6 +22,6 @@ while IFS="" read -r p || [ -n "$p" ]
 do
     rm -rf detlog
     mkdir detlog
-    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -n 1 # -fa -ngl 100
+    ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -n 20 # -fa -ngl 100
 done < "$tf"
 

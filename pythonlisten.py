@@ -12,9 +12,7 @@ with open("detembeds.dims","r") as f:
     dims = [int(d) for d in dims]
 E = np.fromfile("detembeds.bin", dtype=np.float32)
 E.shape = dims[-2:]
-print(E.shape)
-for i in range(10): print(E[0,i])
-exit(1)
+print("embeddings",E.shape)
 
 # Open shared memory
 fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
@@ -24,7 +22,6 @@ buf = memoryview(mm)
 # Open semaphores
 sem_c2p = Semaphore(SEM_C2P)
 sem_py2c = Semaphore(SEM_P2C)
-
 
 def get_buffer_view():
     start = 0
@@ -47,15 +44,11 @@ while True:
     for i in range(3):
         # Wait for C++ to fill buffer
         sem_c2p.acquire()
+        print("now reading shared buffer\n")
         arr = get_buffer_view()
-        if i==2 and E!=None: arr[-1][:] = E[1000][:]
+        if i==2:
+            # force one output token
+            arr[-1][:] = E[2000][:]
+        print("gonna tell llamacpp to continue\n")
         sem_py2c.release()
-
-    if E==None:
-        # on charge encore les embeddings
-        sem_c2p.acquire()
-        E = get_buffer_view()
-        sem_py2c.release()
-        print("embed",E.shape)
-
 

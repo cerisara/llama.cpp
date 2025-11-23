@@ -205,7 +205,8 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
 	std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
 	// Notify Python
 	sem_post(sem_c2p);
-	sem_wait(sem_py2c);
+	int r = sem_wait(sem_py2c);
+	printf("SEMWAIT %d\n",r);
 }
  
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
@@ -289,7 +290,7 @@ static bool ggml_debug_save_embeds(struct ggml_tensor * t, bool ask, void * user
 		}
     }
     return true;
-}  
+} 
 
 static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
     // printf("detnode %s\n",t->name);
@@ -407,6 +408,7 @@ int main(int argc, char ** argv) {
 	// Create semaphores
 	sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
 	sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
+	printf("SEMS %d %d\n",sem_c2p,sem_py2c);
  
     gpt_params params;
     g_params = &params;
