@@ -5,7 +5,6 @@ import torch
 from posix_ipc import Semaphore, SharedMemory
 
 d=128
-dotrain=True
 
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
@@ -22,7 +21,7 @@ def loadUnembeddings():
 
 # Open shared memory
 fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
-mm = mmap.mmap(fd, 1000000)
+mm = mmap.mmap(fd, 4*1000000) # 4 because in C++ the size is given in float32!
 buf = memoryview(mm)
 
 # Open semaphores
@@ -33,15 +32,15 @@ def get_buffer_view():
     start = 0
     mv = buf[start : start + 4]
     start += 4
-    ne1 = int(np.frombuffer(mv, dtype=np.float32))
+    ne1 = np.frombuffer(mv, dtype=np.float32)
+    if ne1==424242: return []
+    ne1 = int(ne1)
     mv = buf[start : start + 4]
     start += 4
     ne0 = int(np.frombuffer(mv, dtype=np.float32))
-    print("nnn",ne1,ne0)
     mv = buf[start : start + 4*ne0*ne1]
     vec = np.frombuffer(mv, dtype=np.float32)
     vec.shape = (ne1,ne0)
-    print("nnv",vec.shape)
     for i in range(ne1): print(vec[i][0])
     return vec
 
@@ -113,36 +112,51 @@ class Ladder(torch.nn.Module):
         self.opt.step()
 
 ladder = Ladder()
-while True:
-    # on charge 3 layers
-    acts = []
-    for i in range(3):
-        # Wait for C++ to fill buffer
-        sem_c2p.acquire()
-        print("now reading shared buffer\n")
-        vec = get_buffer_view()
-        actbig = np.array(vec, copy=True)
-        # actbig = T x 896
-        x = proj(torch.Tensor(actbig))
-        # x   = T x d
-        x = torch.Tensor(x)
-        acts.append(x)
-        if i==2:
-            toks = loadTokens()
-            x = torch.stack(acts)
-            # x = 3 x T x d
-            y = ladder(x)
-            # y = T x d
-            if dotrain and y.shape[0]>1:
-                # do not train when generating response
-                ladder.train(y,toks,acts[-1])
 
-            with torch.no_grad():
-                ybig = unproj(y)
-                ybig = ybig.numpy()
-                ybig = actbig + ybig
-                # pass the new final embedding to llamacpp
-                vec[-1][:] = ybig[-1][:]
-        print("gonna tell llamacpp to continue\n")
-        sem_py2c.release()
+while True:
+    dotrain=False
+    try:
+        with open("pyargs.txt","r") as f: lines=f.readlines()
+        if lines[0].startswith("dotrain"):
+            dotrain=True
+            print("doing training")
+    except: pass
+
+    fincpp = False
+    while not fincpp:
+        # on charge 3 layers
+        acts = []
+        for i in range(3):
+            # Wait for C++ to fill buffer
+            sem_c2p.acquire()
+            print("now reading shared buffer\n")
+            vec = get_buffer_view()
+            if len(vec)==0:
+                fincpp = True
+                break
+            actbig = np.array(vec, copy=True)
+            # actbig = T x 896
+            x = proj(torch.Tensor(actbig))
+            # x   = T x d
+            x = torch.Tensor(x)
+            acts.append(x)
+            if i==2:
+                toks = loadTokens()
+                x = torch.stack(acts)
+                # x = 3 x T x d
+                y = ladder(x)
+                # y = T x d
+                if dotrain and y.shape[0]>1:
+                    # do not train when generating response
+                    ladder.train(y,toks,acts[-1])
+
+                with torch.no_grad():
+                    ybig = unproj(y)
+                    ybig = ybig.numpy()
+                    ybig = actbig + ybig
+                    # pass the new final embedding to llamacpp
+                    vec[-1][:] = ybig[-1][:]
+            print("gonna tell llamacpp to continue\n")
+            sem_py2c.release()
+    break
 

@@ -1268,6 +1268,11 @@ int main(int argc, char ** argv) {
         }
     }
 
+	// detson warn python to end
+	shm->buffers[0][0] = 424242.;
+	shm->buffers[0][1] = 0.;
+	sem_post(sem_c2p);
+
     if (!path_session.empty() && params.prompt_cache_all && !params.prompt_cache_ro) {
         LOG("\n%s: saving final output to session file '%s'\n", __func__, path_session.c_str());
         llama_state_save_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
