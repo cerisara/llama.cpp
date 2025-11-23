@@ -46,6 +46,17 @@ def get_buffer_view():
 
 # random projection
 llm2d = torch.Tensor(896,d)
+def proj(x):
+    # x = ... x llmd
+    with torch.no_grad():
+        y = x @ llm2d
+    return y
+def unproj(x):
+    # x = ... x d
+    with torch.no_grad():
+        y = x @ llm2d.transpose(0,1)
+    return y
+ 
 class Ladder(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -55,25 +66,17 @@ class Ladder(torch.nn.Module):
         with torch.no_grad():
             self.mlp2[-1].weight.copy_(0)
 
-    def forward(self,llmx):
-        # llmx = B x 3 x llmd
-        print("deb1",llmx.shape)
-        with torch.no_grad():
-            b,t,llmd = llmx.shape
-            x = llmx.view(-1,llmd) @ llm2d
-            x = x.view(b,t,d)
-        print("debZ",x.shape)
-        x = x.transpose(1,2)
-        # x = B x d x 3
+    def forward(self,x):
+        # x = 3 x B x d
         z = 0
         for i in range(3):
-            v = self.mlp1[i](x[:,:,i])
+            v = self.mlp1[i](x[i])
             # v = B x d
             v = torch.nn.functional.relu(v)
             v = self.mlp2[i](v)
             z = z + v
-        y = z @ llm2d.transpose(0,1)
-        return y
+        # z = B x d
+        return z
 
 ladder = Ladder()
 while True:
@@ -86,18 +89,22 @@ while True:
         vec = get_buffer_view()
         act = np.array(vec, copy=True)
         # act = T x 896
-        x = torch.Tensor(act[-1])
+        x = proj(torch.Tensor(act))
+        # x   = T x d
+        x = torch.Tensor(x)
         acts.append(x)
-        print("detact",act.shape,len(acts))
         if i==2:
-            x = torch.stack(acts).view(1,3,-1)
+            x = torch.stack(acts)
+            # x = 3 x T x d
             with torch.no_grad():
                 y = ladder(x)
-            y = acts[-1] + y
+            # y = T x d
+            y = unproj(y)
             y = y.numpy()
+            y = act + y
             print("debfin",y.shape)
             # pass the new final embedding to llamacpp
-            vec[-1][:] = y[:]
+            vec[-1][:] = y[-1][:]
         print("gonna tell llamacpp to continue\n")
         sem_py2c.release()
 
