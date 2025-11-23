@@ -245,7 +245,7 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
 	fclose(fdet);
 }
 
-static bool ggml_debug_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
+static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
     if (ask) return true; // Always retrieve data
     const struct ggml_tensor * src0 = t->src[0];
  
@@ -292,7 +292,7 @@ static bool ggml_debug_save_embeds(struct ggml_tensor * t, bool ask, void * user
     return true;
 } 
 
-static bool ggml_debug(struct ggml_tensor * t, bool ask, void * user_data) {
+static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_data) {
     // printf("detnode %s\n",t->name);
     if (ask) return true; // Always retrieve data
     auto * cb_data = (callback_data *) user_data;
@@ -467,12 +467,13 @@ int main(int argc, char ** argv) {
     // detson debug
 	for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
     callback_data cb_data;
- 	// detson save embeddings
 	FILE *f = fopen("detembeds.bin","rb");
 	if (f==NULL) {
-		params.cb_eval = ggml_debug_save_embeds;
+		// detson save embeddings then exit
+		params.cb_eval = detsoncb_save_embeds;
 	} else {
-		params.cb_eval = ggml_debug;
+		// detson pass the activations to python
+		params.cb_eval = detsoncb_share_activs;
  		fclose(f);
 	}
     params.cb_eval_user_data = &cb_data;
@@ -640,6 +641,11 @@ int main(int argc, char ** argv) {
 
         LOG_DBG("prompt: \"%s\"\n", prompt.c_str());
         LOG_DBG("tokens: %s\n", string_from(ctx, embd_inp).c_str());
+
+		// detson: save tokens for training in python
+		FILE *f = fopen("dettoks.txt","w");
+		fprintf(f,"%s\n",string_from(ctx, embd_inp).c_str());
+		fclose(f);
     }
 
     // Should not run without any tokens
