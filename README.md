@@ -5,6 +5,17 @@ make LLAMA_DEBUG=1 GGML_CUDA=1 llama-cli
 il faut ecrire dans le fichier "layers2save" les nodes qui doivent etre sauves
 (la liste des nodes est affichee lorsqu'on run xtof.sh)
 
+elle envoie dans une RAM partagee avec python les activations
+
+TODO: RL
+
+- generate traj with ladder en mode notrain
+- calcul reward (check nouvelle loc sur openstreetmap)
+- si reward > seuil, gen 1 token sur cette traj en mode train et en ponderant la loss par l'avantage
+
+------------------------
+
+
 elle accumule dans le fichier "activs.bin" les activations en sortie de ces nodes, dans l'ordre:
 - nb de trames (int)
 - dim du vecteur (int)
