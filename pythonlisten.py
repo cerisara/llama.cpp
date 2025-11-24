@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 from posix_ipc import Semaphore, SharedMemory
+import time
 
 d=128
 
@@ -23,10 +24,13 @@ def loadUnembeddings():
 fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
 mm = mmap.mmap(fd, 4*1000000) # 4 because in C++ the size is given in float32!
 buf = memoryview(mm)
-
-# Open semaphores
-sem_c2p = Semaphore(SEM_C2P)
-sem_py2c = Semaphore(SEM_P2C)
+while True:
+    try:
+        sem_c2p = Semaphore(SEM_C2P)
+        sem_py2c = Semaphore(SEM_P2C)
+        break
+    except: pass
+    time.sleep(1)
 
 def get_buffer_view():
     start = 0
@@ -111,16 +115,28 @@ class Ladder(torch.nn.Module):
         loss.backward()
         self.opt.step()
 
+def readargs():
+    while True:
+        while True:
+            try:
+                with open("pyargs.txt","r") as f: lines=f.readlines()
+                break
+            except: pass
+            print("wait for pyargs.txt...")
+            time.sleep(1)
+        if lines[0].startswith("dotrain"): return "dotrain"
+        elif lines[0].startswith("quit"): return "quit"
+        elif lines[0].startswith("notrain"): return "notrain"
+        print("pyargs.txt not wellformed yet...")
+        time.sleep(1)
+
 ladder = Ladder()
 
 while True:
     dotrain=False
-    try:
-        with open("pyargs.txt","r") as f: lines=f.readlines()
-        if lines[0].startswith("dotrain"):
-            dotrain=True
-            print("doing training")
-    except: pass
+    s=readargs()
+    if s=="quit": break
+    if s=="dotrain": dotrain=True
 
     fincpp = False
     while not fincpp:

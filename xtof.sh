@@ -11,9 +11,12 @@ rm /dev/shm/sem.c2py_sem
 rm -f layers2save
 touch layers2save
 echo 'l_out-10' >> layers2save
-# echo 'l_out-11' >> layers2save
 echo 'l_out-12' >> layers2save
 echo 'result_norm' >> layers2save
+
+. /home/envs/hf/bin/activate
+echo "notrain" > pyargs.txt
+python pythonlisten.py > py.log &
 
 echo "What comes after 5? Answer: " > toto.txt
 tf="toto.txt"
@@ -24,4 +27,6 @@ do
     mkdir detlog
     ./llama-cli --logdir detlog --temp 0 -c 2048 -nkvo -m "$modnom" -p "$p" -n 20 # -fa -ngl 100
 done < "$tf"
+
+echo "quit" > pyargs.txt
 
