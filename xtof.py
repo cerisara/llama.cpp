@@ -30,6 +30,7 @@ class SharedMem(threading.Thread):
         self.dotrain=False
 
     def run(self):
+        print("sharedmem thread started")
         # Open shared memory
         self.fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
         self.mm = mmap.mmap(self.fd, 4*1000000) # 4 because in C++ the size is given in float32!
@@ -42,6 +43,7 @@ class SharedMem(threading.Thread):
                 break
             except: pass
             time.sleep(1)
+        print("sharedmem thread detected semaphores")
 
         # OK, now listen to llamacpp activations
         fincpp = False
@@ -184,7 +186,10 @@ def rollout(prompt):
 
     os.system("rm -rf detlog")
     os.system("mkdir detlog")
-    os.system(f"./llama-cli --logdir detlog --temp 0.7 -c 2048 -nkvo -m {modnom} -p {prompt} -n 20 # -fa -ngl 100")
+    s='./llama-cli --logdir detlog --temp 0.7 -c 2048 -nkvo -m '+modnom+' -p "'+prompt+'" -n 20 > log'
+    print("run llama",s)
+    os.system(s)
+    print("llama done")
     # quand le rollout est fini, llamacpp envoit un "quit" a ma SharedMem
 
     mypath = "detlog/"
@@ -208,13 +213,16 @@ def rollout(prompt):
 os.system('rm /dev/shm/sem.py2c_sem')
 os.system('rm /dev/shm/sem.c2py_sem')
 sm = SharedMem()
+sm.start()
 # random projection
 llm2d = torch.Tensor(896,d)
 E = loadUnembeddings()
 E = proj(E)
 ladder = Ladder()
 
-s,toks = rollout()
-exit(1)
+p = "What comes after 8? Answer: "
+s,toks = rollout(p)
+print("rollout",s)
+print("rolltok",toks)
 
 
