@@ -173,7 +173,7 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
 			for (int64_t i1 = 0; i1 < ne[1]; i1++) {
 				int32_t val2 = ne[0];
 				if (i3==0 && i2==0 && i1==0) {
-					printf("detne %d %d\n",val,val2);
+					// printf("detne %d %d\n",val,val2);
 					shm->buffers[0][bufidx++] = float(val2);
 				}
 				for (int64_t i0 = 0; i0 < ne[0]; i0++) {
@@ -194,7 +194,7 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     }
 					if (i0==0) {
 						// pour check en python que vector parse dans les bonnes dim
-						printf("vec %d %f\n",i1,v);
+						// printf("vec %d %f\n",i1,v);
 					}
 					shm->buffers[0][bufidx++] = v;
                     sum += v;
@@ -202,11 +202,10 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
             }
         }
     }
-	std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
+	// std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
 	// Notify Python
 	sem_post(sem_c2p);
 	int r = sem_wait(sem_py2c);
-	printf("SEMWAIT %d\n",r);
 }
  
 static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
@@ -234,7 +233,7 @@ static void detson_save_tensor(uint8_t * data, ggml_type type, const int64_t * n
 					} else if (type == GGML_TYPE_I8) {
 						v = (float) *(int8_t *) &data[i];
 					} else {
-						printf("dettype %d\n",type);
+						// printf("dettype %d\n",type);
 						GGML_ABORT("fatal error");
 					}
 					fwrite(&v,sizeof(float),1,fdet);
@@ -275,7 +274,6 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
 			std::vector<uint8_t> dequant_buf(nels * sizeof(float));
 			qtype.to_float(data, (float *)dequant_buf.data(), nels);
 			float *dqbuf = (float *)dequant_buf.data();
-			printf("detsondbug %d %f %f %f\n",nels, dqbuf[0], dqbuf[1], dqbuf[2]);
 			FILE *f = fopen("detembeds.dims","w");
 			fprintf(f,"%d\n",src0->ne[3]);
 			fprintf(f,"%d\n",src0->ne[2]);
@@ -322,7 +320,7 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
 		if (strlen(detsavelayer[i])==strlen(t->name)) {
 			if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 				if (!ggml_is_quantized(t->type)) {
-					printf("detson send %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
+					// printf("detson send %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
 					uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
 					detson_send_tensor(data, t->type, t->ne, t->nb);
 				}
@@ -408,7 +406,6 @@ int main(int argc, char ** argv) {
 	// Create semaphores
 	sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
 	sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
-	printf("SEMS %d %d\n",sem_c2p,sem_py2c);
  
     gpt_params params;
     g_params = &params;
@@ -567,7 +564,7 @@ int main(int argc, char ** argv) {
 
     params.prompt = prompt_line;
 
-    std::cout << "\n\n---------------------------------\n\nCurrent prompt `" << params.prompt << "` !\n\n-------------------------------\n\n";
+    // std::cout << "\n\n---------------------------------\n\nCurrent prompt `" << params.prompt << "` !\n\n-------------------------------\n\n";
 
     //  ------------------------------------------------------------ //
 
@@ -858,6 +855,8 @@ int main(int argc, char ** argv) {
     // the first thing we will do is to output the prompt, so set color accordingly
     console::set_display(console::prompt);
     display = params.display_prompt;
+	char detrep[100000];
+	detrep[0]=0;
 
     std::vector<llama_token> embd;
 
@@ -1067,6 +1066,7 @@ int main(int argc, char ** argv) {
 
                 // Console/Stream Output
                 LOG("%s", token_str.c_str());
+				strcat(detrep, token_str.c_str());
 
                 // Record Displayed Tokens To Log
                 // Note: Generated tokens are created one by one hence this check
@@ -1281,6 +1281,7 @@ int main(int argc, char ** argv) {
     LOG("\n\n");
     gpt_perf_print(ctx, smpl);
     write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
+	printf("DETOUT: %s\nFINDETOUT\n",detrep);
 
     }
 
