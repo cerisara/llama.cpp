@@ -166,7 +166,7 @@ if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
                     detson_send_tensor(data, t->type, t->ne, t->nb);
                 }
 
-                if (!strncmp(t->name,"result_norm",strlen("result_norm"))) {
+                if (detsavelayer[i+1]==NULL) {
                     // der layer, on modifie le token output selon la ladder
                     // la ladder a du deja modifier la shared RAM avec les nouvelles activations
                     if (shm->buffers[0][0]==42) {
@@ -235,6 +235,7 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t 
 }
 
 int main(int argc, char ** argv) {
+	// detson
 	// Create shared memory
     int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     ftruncate(fd, sizeof(SharedMemory));
@@ -284,6 +285,7 @@ int main(int argc, char ** argv) {
     }
     params.cb_eval_user_data = &cb_data;
     params.warmup = false;
+	params.verbosity = 10;
     {
         int j=0;
         char line[10000];
