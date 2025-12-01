@@ -236,14 +236,17 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t 
 
 int main(int argc, char ** argv) {
 	// detson
+	LOG_WRN("detson llama server\n");
 	// Create shared memory
     int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     ftruncate(fd, sizeof(SharedMemory));
     void* addr = mmap(nullptr, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     shm = reinterpret_cast<SharedMemory*>(addr);
+	LOG_WRN("detson sharedmem1\n");
     // Create semaphores
     sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
     sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
+	LOG_WRN("detson semaphores\n");
 
     // own arguments required by this example
     common_params params;
@@ -272,10 +275,13 @@ int main(int argc, char ** argv) {
     llama_numa_init(params.numa);
 
     // detson debug
+	LOG_WRN("detson init\n");
     for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
+	LOG_WRN("detsavelayer initialized\n");
     callback_data cb_data;
     FILE *f = fopen("detembeds.bin","rb");
     if (f==NULL) {
+		LOG_WRN("detson will save embeddings only\n");
         // detson save embeddings then exit
         params.cb_eval = detsoncb_save_embeds;
     } else {
@@ -283,6 +289,7 @@ int main(int argc, char ** argv) {
         params.cb_eval = detsoncb_share_activs;
         fclose(f);
     }
+	LOG_WRN("detcallback setup\n");
     params.cb_eval_user_data = &cb_data;
     params.warmup = false;
 	params.verbosity = 10;
@@ -292,14 +299,17 @@ int main(int argc, char ** argv) {
         FILE *f = fopen("layers2save","r");
         if (f!=NULL) {
             while (fgets(line, sizeof(line), f) != NULL) {
+				LOG_WRN("detcallback %s %d\n",line,strlen(line));
                 line[strlen(line)-1]=0; // -1 because we remove \n
                 if (strlen(line)==0) break;
                 detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
+				LOG_WRN("detallocline\n");
                 strcpy(detsavelayer[j++],line);
             }
             fclose(f);
         }
     }
+	LOG_WRN("detsavelayer loaded\n");
 
 
     LOG_INF("system info: n_threads = %d, n_threads_batch = %d, total_threads = %d\n", params.cpuparams.n_threads, params.cpuparams_batch.n_threads, std::thread::hardware_concurrency());
