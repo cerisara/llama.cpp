@@ -180,9 +180,18 @@ if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
                                 for (int64_t i1 = 0; i1 < t->ne[1]; i1++) {
                                     for (int64_t i0 = 0; i0 < t->ne[0]; i0++) {
                                         size_t i = i3 * t->nb[3] + i2 * t->nb[2] + i1 * t->nb[1] + i0 * t->nb[0];
-                                        float *v = (float *) &data[i];
-                                        v[0] = shm->buffers[0][bufidx++];
-                                    }}}}
+                                        float py_val = shm->buffers[0][bufidx++];
+                                        if (t->type == GGML_TYPE_F16) {
+                                            ggml_fp16_t *v = (ggml_fp16_t *) &data[i];
+                                            *v = ggml_fp32_to_fp16(py_val);
+                                        } else if (t->type == GGML_TYPE_F32) {
+                                            float *v = (float *) &data[i];
+                                            *v = py_val;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -372,6 +381,11 @@ int main(int argc, char ** argv) {
     // setup clean up function, to be called before exit
     auto clean_up = [&ctx_http, &ctx_server]() {
         SRV_INF("%s: cleaning up before exit...\n", __func__);
+
+        // detson inform python that we are quitting
+        shm->buffers[0][0] = 424242.0f;
+        sem_post(sem_c2p);
+
         ctx_http.stop();
         ctx_server.terminate();
         llama_backend_free();
