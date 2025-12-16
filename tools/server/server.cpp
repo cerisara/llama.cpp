@@ -138,62 +138,101 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
     auto * cb_data = (callback_data *) user_data;
     const struct ggml_tensor * src0 = t->src[0];
     const struct ggml_tensor * src1 = t->src[1];
-    printf("detnode %s\n",t->name,src0,src1);
 
-    if (src0!=NULL && !strncmp(src0->name,"output.weight",13)) {
-        printf("[DEBUG] Logits tensor found: %s, op: %s\n", t->name, ggml_op_desc(t));
+    // Debug block to inspect inputs and output of the final matrix multiplication
+    if (t->op == GGML_OP_MUL_MAT && src0 != NULL && strncmp(src0->name, "output.weight", 13) == 0) {
+        printf("\n--- [DEBUG] Logits Calculation Detected ---\n");
 
-        // copy the data from the GPU memory if needed
-        const bool is_host = ggml_backend_buffer_is_host(t->buffer);
-        std::vector<uint8_t> data_host_vec;
-        uint8_t * data;
-        if (!is_host) {
+        // Helper lambda to print the first few values of a tensor
+        auto print_tensor_head = [](const struct ggml_tensor * tensor, const char* name, bool last_token_only) {
+            if (tensor == NULL) {
+                printf("[DEBUG] %s is NULL\n", name);
+                return;
+            }
+            printf("[DEBUG] Head of %s (name: %s, type: %s)\n", name, tensor->name, ggml_type_name(tensor->type));
+
+            const bool is_host = ggml_backend_buffer_is_host(tensor->buffer);
+            std::vector<uint8_t> data_host_vec;
+            const uint8_t * data_ptr;
+            if (!is_host) {
+                auto n_bytes = ggml_nbytes(tensor);
+                data_host_vec.resize(n_bytes);
+                ggml_backend_tensor_get(tensor, data_host_vec.data(), 0, n_bytes);
+                data_ptr = data_host_vec.data();
+            } else {
+                data_ptr = (const uint8_t *) tensor->data;
+            }
+
+            const void* data_to_print = data_ptr;
+            if (last_token_only && tensor->ne[1] > 0) {
+                int64_t n_tokens = tensor->ne[1];
+                size_t offset = (n_tokens - 1) * tensor->ne[0] * (ggml_type_size(tensor->type) / ggml_blck_size(tensor->type));
+                data_to_print = (const uint8_t*)data_ptr + offset;
+            }
+
+            const int n_els_to_print = 10;
+            std::vector<float> float_values(n_els_to_print);
+            const ggml_type_traits *traits = ggml_get_type_traits(tensor->type);
+            if (traits->to_float) {
+                traits->to_float(data_to_print, float_values.data(), n_els_to_print);
+                printf("[DEBUG] First %d values of %s: ", n_els_to_print, name);
+                for(int i = 0; i < n_els_to_print; ++i) {
+                    printf("%.6f ", float_values[i]);
+                }
+                printf("\n");
+			} else {
+				if (!strncmp(ggml_type_name(tensor->type),"f32",3)) {
+					float *float_values = (float *)data_to_print;
+					printf("[DEBUG] First %d values of %s: ", n_els_to_print, name);
+					for(int i = 0; i < n_els_to_print; ++i) {
+						printf("%.6f ", float_values[i]);
+					}
+					printf("\n"); 
+				} else {
+					printf("[DEBUG] Cannot print values for type %s\n", ggml_type_name(tensor->type));
+				}
+			}
+        };
+
+        // Print inputs
+        print_tensor_head(src1, "Final Activations", true);
+        print_tensor_head(src0, "Unembedding Matrix", false);
+
+        // Print output argmax for confirmation
+        const bool is_host_out = ggml_backend_buffer_is_host(t->buffer);
+        std::vector<uint8_t> data_host_vec_out;
+        uint8_t * data_out;
+        if (!is_host_out) {
             auto n_bytes = ggml_nbytes(t);
-            data_host_vec.resize(n_bytes);
-            ggml_backend_tensor_get(t, data_host_vec.data(), 0, n_bytes);
-            data = data_host_vec.data();
+            data_host_vec_out.resize(n_bytes);
+            ggml_backend_tensor_get(t, data_host_vec_out.data(), 0, n_bytes);
+            data_out = data_host_vec_out.data();
         } else {
-            data = (uint8_t *) t->data;
+            data_out = (uint8_t *) t->data;
         }
 
         if (t->type == GGML_TYPE_F32) {
-            float* logits_data = (float*) data;
+            float* logits_data = (float*) data_out;
             int64_t n_tokens = t->ne[1];
             int64_t vocab_size = t->ne[0];
-            printf("[DEBUG] Logits tensor shape: (%" PRId64 ", %" PRId64 ")\n", vocab_size, n_tokens);
-
             if (n_tokens > 0) {
-                // Pointer to the logits of the last token
                 float* last_token_logits = logits_data + (n_tokens - 1) * vocab_size;
-
-                // Find the argmax
                 int max_idx = 0;
-                float max_val = last_token_logits[0];
                 for (int i = 1; i < vocab_size; ++i) {
-                    if (last_token_logits[i] > max_val) {
-                        max_val = last_token_logits[i];
-                        max_idx = i;
-                    }
+                    if (last_token_logits[i] > last_token_logits[max_idx]) max_idx = i;
                 }
                 printf("[DEBUG] C++ argmax next token prediction: %d\n", max_idx);
             }
         } else {
-            printf("[DEBUG] Logits tensor is not F32, cannot print.\n");
+            printf("[DEBUG] Output logits tensor is not F32.\n");
         }
+        printf("--- [DEBUG] End Logits Calculation ---\n\n");
     }
 
-    /*
-    printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
-    if (src0!=NULL)
-        printf("detsonSRC0 %s %s %d %d %d %d\n",src0->name, ggml_op_desc(src0), src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);
-    if (src1!=NULL)
-        printf("detsonSRC1 %s %s %d %d %d %d\n",src1->name, ggml_op_desc(src1), src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3]); 
-    */
 
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);
     if (!is_host) {
-        printf("detwarn cannot modify activations on GPU!\n");
         auto n_bytes = ggml_nbytes(t);
         cb_data->data.resize(n_bytes);
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
@@ -202,20 +241,14 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
     for (int i=0;i<1000;i++) {
         if (detsavelayer[i]==NULL) break;
 
-        if (strlen(detsavelayer[i])==strlen(t->name)) {
-if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+        if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
                 if (!ggml_is_quantized(t->type)) {
-                    // printf("detson send %s %d %d %d\n",t->name,t->ne[0],t->ne[1],t->ne[2]);
                     uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
                     detson_send_tensor(data, t->type, t->ne, t->nb);
                 }
 
                 if (detsavelayer[i+1]==NULL) {
-                    // der layer, on modifie le token output selon la ladder
-                    // la ladder a du deja modifier la shared RAM avec les nouvelles activations
-                    if (shm->buffers[0][0]==42) {
-                        // do not modify output
-                    } else {
+                    if (shm->buffers[0][0] != 424242.0f) {
                         // recopie la shared RAM dans le computation graph de llamacpp
                         int bufidx = 2; // skip the 2 first ints = dims
                         uint8_t * data = (uint8_t *) t->data;
@@ -239,7 +272,6 @@ if (!strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
                     }
                 }
             }
-        }
     }
     return true;
 }
