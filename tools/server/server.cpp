@@ -22,6 +22,8 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
+#include <vector>
+#include <cinttypes>
 
 static const char* SHM_NAME = "/ring_buffer_demo";
 static const char* SEM_C2P = "/c2py_sem";
@@ -132,11 +134,53 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
     return true;
 }
 static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_data) {
-    // printf("detnode %s\n",t->name);
     if (ask) return true; // Always retrieve data
     auto * cb_data = (callback_data *) user_data;
     const struct ggml_tensor * src0 = t->src[0];
     const struct ggml_tensor * src1 = t->src[1];
+    printf("detnode %s\n",t->name,src0,src1);
+
+    if (src0!=NULL && !strncmp(src0->name,"output.weight",13)) {
+        printf("[DEBUG] Logits tensor found: %s, op: %s\n", t->name, ggml_op_desc(t));
+
+        // copy the data from the GPU memory if needed
+        const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+        std::vector<uint8_t> data_host_vec;
+        uint8_t * data;
+        if (!is_host) {
+            auto n_bytes = ggml_nbytes(t);
+            data_host_vec.resize(n_bytes);
+            ggml_backend_tensor_get(t, data_host_vec.data(), 0, n_bytes);
+            data = data_host_vec.data();
+        } else {
+            data = (uint8_t *) t->data;
+        }
+
+        if (t->type == GGML_TYPE_F32) {
+            float* logits_data = (float*) data;
+            int64_t n_tokens = t->ne[1];
+            int64_t vocab_size = t->ne[0];
+            printf("[DEBUG] Logits tensor shape: (%" PRId64 ", %" PRId64 ")\n", vocab_size, n_tokens);
+
+            if (n_tokens > 0) {
+                // Pointer to the logits of the last token
+                float* last_token_logits = logits_data + (n_tokens - 1) * vocab_size;
+
+                // Find the argmax
+                int max_idx = 0;
+                float max_val = last_token_logits[0];
+                for (int i = 1; i < vocab_size; ++i) {
+                    if (last_token_logits[i] > max_val) {
+                        max_val = last_token_logits[i];
+                        max_idx = i;
+                    }
+                }
+                printf("[DEBUG] C++ argmax next token prediction: %d\n", max_idx);
+            }
+        } else {
+            printf("[DEBUG] Logits tensor is not F32, cannot print.\n");
+        }
+    }
 
     /*
     printf("detsonlayer %s %s %d %d %d %d\n",t->name, ggml_op_desc(t), t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
