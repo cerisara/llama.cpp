@@ -292,7 +292,8 @@ int main(int argc, char ** argv) {
 	LOG_WRN("detcallback setup\n");
     params.cb_eval_user_data = &cb_data;
     params.warmup = false;
-	params.verbosity = 10;
+	params.logits_all = true;
+	// params.verbosity = 10;
     {
         int j=0;
         char line[10000];
