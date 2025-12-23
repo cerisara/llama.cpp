@@ -29,7 +29,7 @@ static const char* SHM_NAME = "/ring_buffer_demo";
 static const char* SEM_C2P = "/c2py_sem";
 static const char* SEM_P2C = "/py2c_sem";
 struct SharedMemory {
-    float buffers[1][1000000];
+    float buffers[1][10000000];
 };
 SharedMemory *shm;
 sem_t* sem_c2p;
@@ -71,7 +71,8 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
                     } else if (type == GGML_TYPE_I8) {
                         v = (float) *(int8_t *) &data[i];
                     } else {
-                        GGML_ABORT("fatal error");
+                        printf("[detson_send_tensor] error: unsupported tensor type %s\n", ggml_type_name(type));
+                        v = 0.0f;
                     }
                     if (i0==0) {
                         // pour check en python que vector parse dans les bonnes dim
@@ -229,7 +230,6 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
         printf("--- [DEBUG] End Logits Calculation ---\n\n");
     }
 
-
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);
     if (!is_host) {
@@ -238,14 +238,13 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
     }
 
+	// fprintf(stderr,"detdebug2 %s\n",t->name);
     for (int i=0;i<1000;i++) {
         if (detsavelayer[i]==NULL) break;
 
         if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
-                if (!ggml_is_quantized(t->type)) {
-                    uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-                    detson_send_tensor(data, t->type, t->ne, t->nb);
-                }
+                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+                detson_send_tensor(data, t->type, t->ne, t->nb);
 
                 if (detsavelayer[i+1]==NULL) {
                     if (shm->buffers[0][0] != 424242.0f) {
