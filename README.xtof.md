@@ -38,14 +38,20 @@ data; no graph surgery or explicit reinjection op is involved.
   `sem_wait(&sem_py2c)` (`server.cpp:89-90`).
 - Graph evaluation is frozen until Python replies: it is a fully synchronous
   (stop-the-world) handoff during decode.
+- Shutdown sentinel: on quit the server writes `424242.0f` into slot 0 and
+  posts `/c2py_sem` (`server.cpp:461-463`); the external program treats
+  `slot 0 == 424242` after an `acquire` as "bye-bye" and stops listening.
 
 ### 3. Re-injection (Python → C++)
 
 In `detsoncb_share_activs` (`server.cpp:247-265`), after the semaphore
-round-trip, the modified values are copied back if two conditions hold:
+round-trip, the buffer is copied back **in place** into the tensor if two
+conditions hold:
 
-1. Python set `shm->buffers[0][0] = 424242.0f` — its "I modified it" flag.
-   If unset, the original activations pass through untouched.
+1. Slot 0 does *not* hold the shutdown sentinel (`shm->buffers[0][0] !=
+   424242.0f`). Right after the C++ side's own send, slot 0 holds `ne[1]`
+   (n_tokens), so the copy-back is **active by default**: whatever Python
+   left in the buffer — modified or untouched — is what the graph reads next.
 2. The tensor is the **last entry** in `detsavelayer`
    (`detsavelayer[i+1] == NULL`). Those names come from the runtime file
    `layers2save`; earlier listed layers are send-only.
@@ -78,6 +84,13 @@ modified activations — consistent with pure in-place reinjection.
 - **Stop-the-world cost**: the callback runs synchronously inside the
   scheduler loop, so each hooked layer stalls the whole decode until Python
   round-trips the ~40 MB segment.
+- **Fixed segment size**: the shm holds exactly 10M float32, so the hooked
+  tensor must satisfy `ne[3]*ne[2]*ne[1]*ne[0] < 10_000_000` (e.g. during
+  prefill with `n_tokens` prompt tokens: `n_tokens * n_embd < 10M`).
+- **First-run flag**: if `detembeds.bin` (server CWD) is missing, the server
+  registers `detsoncb_save_embeds` instead, dumps the unembedding matrix to
+  `detembeds.bin` on the first inference and `exit(1)`s. The file is then
+  only used as a flag to select the live shared-activations callback.
 
 ## Key locations
 
@@ -91,3 +104,17 @@ modified activations — consistent with pure in-place reinjection.
 | Callback registration (`cb_eval`) | `tools/server/server.cpp:370-375` |
 | `cb_eval` plumbing | `common/common.h:333`, `src/llama-context.cpp:779`, `include/llama.h:343` |
 | Callback invocation in scheduler | `ggml/src/ggml-backend.cpp:1558-1595` |
+| Shutdown sentinel write | `tools/server/server.cpp:461-463` |
+
+## Toy showcase
+
+`toy_bias_activs.py` (this directory) demonstrates the mechanism end to end:
+it hooks the `result_norm` node (the last activation right before the
+unembedding), adds a small random Gaussian bias at every decoding step while
+the server is live, and prints a greedy completion so the effect is visible.
+It also automates the first-run `detembeds.bin` dump. See the script
+docstring for usage and options (`--bias-scale`, `--layers`, ...).
+
+A more elaborate consumer of the same protocol (activation collection for
+training) lives at `~/git/researchplm/ladder/` (`nancyactivs.py` +
+`xllamacpp.py`).
