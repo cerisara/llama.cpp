@@ -65,6 +65,9 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> tokens  = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t       dataset = common_opt_dataset_init(ctx, tokens, llama_n_ctx(ctx) / 2);
 
+    // llama_opt_init() overrides n_ctx_train, so keep the original to restore in the saved model
+    const uint32_t n_ctx_train = llama_model_n_ctx_train(model);
+
     struct lr_opt & lr = params.lr;
     LOG_INF("-optimizer %s -lr0 %.2g -wd %.2g -lr-min %.2g -min-epochs %.2g -epochs %d -period %.2g -val %.2g\n",
             ggml_opt_optimizer_name(params.optimizer), (double) lr.lr0, (double) lr.wd, (double) lr.lr_min, (double) lr.decay_epochs,
@@ -96,6 +99,8 @@ int main(int argc, char ** argv) {
     ggml_opt_result_free(result_train);
     ggml_opt_result_free(result_eval);
 
+    // restore the original context length before saving, so the gguf metadata is not limited to the training context
+    llama_model_set_n_ctx_train(model, n_ctx_train);
     llama_model_save_to_file(model, params.out_file.c_str());
 
     llama_backend_free();

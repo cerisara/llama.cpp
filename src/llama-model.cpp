@@ -2663,6 +2663,10 @@ int32_t llama_model_n_ctx_train(const llama_model * model) {
     return model->hparams.n_ctx_train;
 }
 
+void llama_model_set_n_ctx_train(llama_model * model, uint32_t n_ctx_train) {
+    model->hparams.n_ctx_train = n_ctx_train;
+}
+
 int32_t llama_model_n_embd(const llama_model * model) {
     return model->hparams.n_embd;
 }
