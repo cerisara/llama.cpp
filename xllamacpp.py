@@ -14,6 +14,7 @@ import threading
 import signal
 import requests
 
+PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
@@ -54,13 +55,13 @@ class SharedMem(threading.Thread):
             vec = self.get_buffer_view()
             if len(vec)==0:
                 # when llamacpp quits, it warns this listener with an empty vector
-                print("python got empty c++ vector")
+                print("python got empty c++ vector: signal to quit")
                 fincpp = True
                 break
             # big activations (the ones from the LLM):
             actbig = np.array(vec, copy=True)
             # actbig = T x 896
-            y = self.activsHandler(actbig,i % self.nLayersGot)
+            y = self.activsHandler.processActivations(actbig,i % self.nLayersGot)
             if not y is None:
                 # overwrite the activations into llama.cpp
                 for j in range(len(vec)):
@@ -90,7 +91,7 @@ class SharedMem(threading.Thread):
         return vec
 
     def detokenize(self, toks):
-        url = "http://localhost:8080/detokenize"
+        url = "http://localhost:"+PORT+"/detokenize"
         data = { "tokens": [int(x) for x in toks] }
         headers = { "Content-Type": "application/json" }
         response = requests.post(url, json=data, headers=headers)
@@ -101,7 +102,7 @@ class SharedMem(threading.Thread):
         return u
  
     def tokenize(self, prompt):
-        url = "http://localhost:8080/tokenize"
+        url = "http://localhost:"+PORT+"/tokenize"
         data = { "content": prompt }
         headers = { "Content-Type": "application/json" }
         response = requests.post(url, json=data, headers=headers)
@@ -118,7 +119,7 @@ class SharedMem(threading.Thread):
         # ca ne sert a rien a train time, mais a test time il faudra donc utiliser l'API completion !
         # TODO: check ACC a test time avec completion after train avec embeddings
 
-        url = "http://localhost:8080/embeddings"
+        url = "http://localhost:"+PORT+"/embeddings"
         data = {"content" : prompt, "return_tokens": True, "cache_prompt": False}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp")
@@ -226,7 +227,9 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     os.system("rm -rf detlog")
     os.system("mkdir detlog")
 
-    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui","--no-warmup","--ctx-size","30000","--cache-ram", "0", "--embeddings")
+    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
+                               "--no-warmup","--ctx-size","30000","--cache-ram",
+                               "0", "--embeddings", "--port", PORT)
     runner.start(wait_for_text="all slots are idle")
     print("python main thread continues")
     time.sleep(1)
@@ -245,7 +248,7 @@ def helloworld():
 
     handler = ActivsHandler()
     connLayers = ['l_out-2','l_out-12','result_norm']
-    sharedRAM, procCPP = initLlamacpp("./modllama", connLayers, handler)
+    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
     
     print("Triggering rollout to get activations...")
     utt = "The sounds of time for me are running low"
