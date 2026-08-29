@@ -34,8 +34,14 @@ class SharedMem(threading.Thread):
         # this function is executed in a separate thread:
         # it listens to llamacpp and calls a ladder method when the forward pass has reached the last LLM layer
         print("sharedmem thread started")
-        # Open shared memory
-        self.fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
+        while True:
+            # wait for llama-server to create the shared memory file
+            try:
+                self.fd = os.open("/dev/shm" + SHM_NAME, os.O_RDWR)
+                break
+            except FileNotFoundError:
+                pass
+            time.sleep(1)
         self.mm = mmap.mmap(self.fd, 4*10000000) # 4 because in C++ the size is given in float32!
         self.buf = memoryview(self.mm)
         while True:
@@ -127,6 +133,7 @@ class SharedMem(threading.Thread):
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp")
         response = requests.post(url, json=data, headers=headers)
+        with open("response","w") as f: f.print(response)
         sout = response.json()
         print("Status code:", response.status_code)
         print("Response body:", len(sout))
@@ -233,8 +240,6 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     os.system('rm -f layers2save')
     os.system('touch layers2save')
     for l in connectedCPPLayers: os.system('echo "'+l+'" >> layers2save')
-    os.system("rm -rf detlog")
-    os.system("mkdir detlog")
 
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
@@ -264,7 +269,7 @@ def helloworld():
     
     print("Triggering rollout to get activations...")
     utt = "The sounds of time for me are running low"
-    sharedRAM.rollout(utt, 10)
+    sharedRAM.rollout(utt)
 
     print("Waiting for activations to be processed...")
     processed = handler.processed_once.wait(timeout=10) # Wait for 10 seconds max
