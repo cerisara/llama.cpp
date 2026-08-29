@@ -22,6 +22,267 @@
 #include <windows.h>
 #endif
 
+// detson semaphore to communicate with python
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <semaphore.h>
+#include <unistd.h>
+#include <iostream>
+#include <cstring>
+#include <vector>
+#include <cinttypes>
+
+static const char* SHM_NAME = "/ring_buffer_demo";
+static const char* SEM_C2P = "/c2py_sem";
+static const char* SEM_P2C = "/py2c_sem";
+struct SharedMemory {
+    float buffers[1][10000000];
+};
+SharedMemory *shm;
+sem_t* sem_c2p;
+sem_t* sem_py2c;
+
+char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
+struct callback_data {
+    std::vector<uint8_t> data;
+};
+
+static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
+    float sum = 0;
+
+    // Fill buffer
+    int bufidx = 0;
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+            int32_t val = ne[1];
+            if (i3==0 && i2==0) {
+                shm->buffers[0][bufidx++] = float(val);
+            }
+            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+                int32_t val2 = ne[0];
+                if (i3==0 && i2==0 && i1==0) {
+                    // printf("detne %d %d\n",val,val2);
+                    shm->buffers[0][bufidx++] = float(val2);
+                }
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) &data[i];
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) &data[i];
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) &data[i];
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) &data[i];
+                    } else {
+                        printf("[detson_send_tensor] error: unsupported tensor type %s\n", ggml_type_name(type));
+                        v = 0.0f;
+                    }
+                    if (i0==0) {
+                        // pour check en python que vector parse dans les bonnes dim
+                        // printf("vec %d %f\n",i1,v);
+                    }
+                    shm->buffers[0][bufidx++] = v;
+                    sum += v;
+                }
+            }
+        }
+    }
+    // std::cout << "[C++] Sending buffer " << bufidx << " " << sum << "\n";
+    // Notify Python
+    sem_post(sem_c2p);
+    int r = sem_wait(sem_py2c);
+}
+static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
+    if (ask) return true; // Always retrieve data
+    const struct ggml_tensor * src0 = t->src[0];
+
+    if (src0!=NULL && !strncmp(src0->name,"output.weight",13)) {
+        auto * cb_data = (callback_data *) user_data;
+        uint8_t * data = (uint8_t *) src0->data;
+    
+        // copy the data from the GPU memory if needed
+        const bool is_host = ggml_backend_buffer_is_host(src0->buffer);
+        printf("saving embeddings %d %d\n", is_host, ggml_is_quantized(src0->type));
+        if (!is_host) {
+            auto n_bytes = ggml_nbytes(src0);
+            cb_data->data.resize(n_bytes);
+            ggml_backend_tensor_get(src0, cb_data->data.data(), 0, n_bytes);
+            printf("ERROR GPU not implemented yet");
+        }       
+
+        // save unembedding matrix
+        if (src0->type != GGML_TYPE_F32) {
+            auto nels = ggml_nelements(src0);
+            printf("dequantizing... %d %d %d %d %d\n",nels,
+                    src0->ne[3],
+                    src0->ne[2],
+                    src0->ne[1],
+                    src0->ne[0]);
+            ggml_type_traits qtype = *ggml_get_type_traits(src0->type);
+            std::vector<uint8_t> dequant_buf(nels * sizeof(float));
+            qtype.to_float(data, (float *)dequant_buf.data(), nels);
+            float *dqbuf = (float *)dequant_buf.data();
+            FILE *f = fopen("detembeds.dims","w");
+			fprintf(f,"%d\n",src0->ne[3]);
+            fprintf(f,"%d\n",src0->ne[2]);
+            fprintf(f,"%d\n",src0->ne[1]);
+            fprintf(f,"%d\n",src0->ne[0]);
+            fclose(f);
+            f = fopen("detembeds.bin","wb");
+            fwrite(dqbuf,sizeof(float),nels,f);
+            fclose(f);
+            printf("Embeddings saved; you can rerun the program!");
+            exit(1);
+        }
+    }
+    return true;
+}
+static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_data) {
+    if (ask) return true; // Always retrieve data
+    auto * cb_data = (callback_data *) user_data;
+    const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
+
+    // Debug block to inspect inputs and output of the final matrix multiplication
+    if (t->op == GGML_OP_MUL_MAT && src0 != NULL && strncmp(src0->name, "output.weight", 13) == 0) {
+        printf("\n--- [DEBUG] Logits Calculation Detected ---\n");
+
+        // Helper lambda to print the first few values of a tensor
+        auto print_tensor_head = [](const struct ggml_tensor * tensor, const char* name, bool last_token_only) {
+            if (tensor == NULL) {
+                printf("[DEBUG] %s is NULL\n", name);
+                return;
+            }
+            printf("[DEBUG] Head of %s (name: %s, type: %s)\n", name, tensor->name, ggml_type_name(tensor->type));
+
+            const bool is_host = ggml_backend_buffer_is_host(tensor->buffer);
+            std::vector<uint8_t> data_host_vec;
+            const uint8_t * data_ptr;
+            if (!is_host) {
+                auto n_bytes = ggml_nbytes(tensor);
+                data_host_vec.resize(n_bytes);
+                ggml_backend_tensor_get(tensor, data_host_vec.data(), 0, n_bytes);
+                data_ptr = data_host_vec.data();
+            } else {
+                data_ptr = (const uint8_t *) tensor->data;
+            }
+
+            const void* data_to_print = data_ptr;
+            if (last_token_only && tensor->ne[1] > 0) {
+                int64_t n_tokens = tensor->ne[1];
+                size_t offset = (n_tokens - 1) * tensor->ne[0] * (ggml_type_size(tensor->type) / ggml_blck_size(tensor->type));
+                data_to_print = (const uint8_t*)data_ptr + offset;
+            }
+
+            const int n_els_to_print = 10;
+            std::vector<float> float_values(n_els_to_print);
+            const ggml_type_traits *traits = ggml_get_type_traits(tensor->type);
+            if (traits->to_float) {
+                traits->to_float(data_to_print, float_values.data(), n_els_to_print);
+                printf("[DEBUG] First %d values of %s: ", n_els_to_print, name);
+                for(int i = 0; i < n_els_to_print; ++i) {
+                    printf("%.6f ", float_values[i]);
+                }
+                printf("\n");
+			} else {
+				if (!strncmp(ggml_type_name(tensor->type),"f32",3)) {
+					float *float_values = (float *)data_to_print;
+					printf("[DEBUG] First %d values of %s: ", n_els_to_print, name);
+					for(int i = 0; i < n_els_to_print; ++i) {
+						printf("%.6f ", float_values[i]);
+					}
+					printf("\n"); 
+				} else {
+					printf("[DEBUG] Cannot print values for type %s\n", ggml_type_name(tensor->type));
+				}
+			}
+        };
+
+        // Print inputs
+        print_tensor_head(src1, "Final Activations", true);
+        print_tensor_head(src0, "Unembedding Matrix", false);
+
+        // Print output argmax for confirmation
+        const bool is_host_out = ggml_backend_buffer_is_host(t->buffer);
+        std::vector<uint8_t> data_host_vec_out;
+        uint8_t * data_out;
+        if (!is_host_out) {
+            auto n_bytes = ggml_nbytes(t);
+            data_host_vec_out.resize(n_bytes);
+            ggml_backend_tensor_get(t, data_host_vec_out.data(), 0, n_bytes);
+            data_out = data_host_vec_out.data();
+        } else {
+            data_out = (uint8_t *) t->data;
+        }
+
+        if (t->type == GGML_TYPE_F32) {
+            float* logits_data = (float*) data_out;
+            int64_t n_tokens = t->ne[1];
+            int64_t vocab_size = t->ne[0];
+            if (n_tokens > 0) {
+                float* last_token_logits = logits_data + (n_tokens - 1) * vocab_size;
+                int max_idx = 0;
+                for (int i = 1; i < vocab_size; ++i) {
+                    if (last_token_logits[i] > last_token_logits[max_idx]) max_idx = i;
+                }
+                printf("[DEBUG] C++ argmax next token prediction: %d\n", max_idx);
+            }
+        } else {
+            printf("[DEBUG] Output logits tensor is not F32.\n");
+        }
+        printf("--- [DEBUG] End Logits Calculation ---\n\n");
+    }
+
+    // copy the data from the GPU memory if needed
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    if (!is_host) {
+        auto n_bytes = ggml_nbytes(t);
+        cb_data->data.resize(n_bytes);
+        ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
+    }
+
+	// fprintf(stderr,"detdebug2 %s\n",t->name);
+    for (int i=0;i<1000;i++) {
+        if (detsavelayer[i]==NULL) break;
+
+        if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+                uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
+                detson_send_tensor(data, t->type, t->ne, t->nb);
+
+                if (detsavelayer[i+1]==NULL) {
+                    if (shm->buffers[0][0] != 424242.0f) {
+                        // recopie la shared RAM dans le computation graph de llamacpp
+                        int bufidx = 2; // skip the 2 first ints = dims
+                        uint8_t * data = (uint8_t *) t->data;
+                        for (int64_t i3 = 0; i3 < t->ne[3]; i3++) {
+                            for (int64_t i2 = 0; i2 < t->ne[2]; i2++) {
+                                for (int64_t i1 = 0; i1 < t->ne[1]; i1++) {
+                                    for (int64_t i0 = 0; i0 < t->ne[0]; i0++) {
+                                        size_t i = i3 * t->nb[3] + i2 * t->nb[2] + i1 * t->nb[1] + i0 * t->nb[0];
+                                        float py_val = shm->buffers[0][bufidx++];
+                                        if (t->type == GGML_TYPE_F16) {
+                                            ggml_fp16_t *v = (ggml_fp16_t *) &data[i];
+                                            *v = ggml_fp32_to_fp16(py_val);
+                                        } else if (t->type == GGML_TYPE_F32) {
+                                            float *v = (float *) &data[i];
+                                            *v = py_val;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+    return true;
+}
+
 static std::function<void(int)> shutdown_handler;
 static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
 
@@ -113,6 +374,55 @@ int llama_server(int argc, char ** argv) {
 }
 
 int llama_server(common_params & params, int argc, char ** argv) {
+
+// ===== detson: shared-memory activation handoff (ported from sharedram branch) =====
+    {
+        LOG_WRN("detson llama server\n");
+        // Create shared memory
+        int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+        ftruncate(fd, sizeof(SharedMemory));
+        void* addr = mmap(nullptr, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        shm = reinterpret_cast<SharedMemory*>(addr);
+        LOG_WRN("detson sharedmem1\n");
+        // Create semaphores
+        sem_c2p = sem_open(SEM_C2P, O_CREAT, 0666, 0);
+        sem_py2c = sem_open(SEM_P2C, O_CREAT, 0666, 0);
+        LOG_WRN("detson semaphores\n");
+
+        LOG_WRN("detson init\n");
+        for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
+        LOG_WRN("detsavelayer initialized\n");
+        callback_data cb_data;
+        FILE *f = fopen("detembeds.bin","rb");
+        if (f==NULL) {
+            LOG_WRN("detson will save embeddings only\n");
+            params.cb_eval = detsoncb_save_embeds;
+        } else {
+            params.cb_eval = detsoncb_share_activs;
+            fclose(f);
+        }
+        LOG_WRN("detcallback setup\n");
+        params.cb_eval_user_data = &cb_data;
+        params.warmup = false;
+        {
+            int j=0;
+            char line[10000];
+            FILE *f2 = fopen("layers2save","r");
+            if (f2!=NULL) {
+                while (fgets(line, sizeof(line), f2) != NULL) {
+                    LOG_WRN("detcallback %s %d\n",line,strlen(line));
+                    line[strlen(line)-1]=0; // -1 because we remove \n
+                    if (strlen(line)==0) break;
+                    detsavelayer[j]= (char *)malloc(sizeof(char)*strlen(line));
+                    LOG_WRN("detallocline\n");
+                    strcpy(detsavelayer[j++],line);
+                }
+                fclose(f2);
+            }
+        }
+        LOG_WRN("detsavelayer loaded\n");
+    }
+
     bool is_run_by_cli = (argv == nullptr);
 
     common_models_handler models_handler;
@@ -458,6 +768,10 @@ int llama_server(common_params & params, int argc, char ** argv) {
             ctx_server.terminate();
             mcp_mgr.shutdown();
             llama_backend_free();
+        // detson inform python that we are quitting
+        shm->buffers[0][0] = 424242.0f;
+        sem_post(sem_c2p);
+
         };
 
         // start the HTTP server before loading the model to be able to serve /health requests
