@@ -24,11 +24,26 @@ SEM_P2C = "/py2c_sem"
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
+class DummyHandler:
+    # consumes and prints every activation sent by llama.cpp while it is
+    # initializing (warmup or leftovers from a previous run).
+    def processActivations(self, actbig, i):
+        print("DUMMY consuming activation "+str(i)+" shape="+str(actbig.shape)+" first="+str(actbig.flatten()[:5]))
+        return None # do not modify activations
+
 class SharedMem(threading.Thread):
-    def __init__(self, nLayersGot, activsHandler):
+    def __init__(self, nLayersGot, activsHandler, listening_event):
         self.nLayersGot = nLayersGot
         self.activsHandler = activsHandler
+        self.listening_event = listening_event
         threading.Thread.__init__(self)
+
+    def get_handler(self):
+        # use the dummy handler until llama.cpp is really ready (listening text
+        # seen), then switch to the real handler from main and drop the dummy
+        if self.listening_event.is_set():
+            return self.activsHandler
+        return DummyHandler()
 
     def run(self):
         # this function is executed in a separate thread:
@@ -70,7 +85,9 @@ class SharedMem(threading.Thread):
             # big activations (the ones from the LLM):
             actbig = np.array(vec, copy=True)
             # actbig = T x 896
-            y = self.activsHandler.processActivations(actbig,i % self.nLayersGot)
+            # use dummy handler until llama.cpp is really ready, then real one
+            handler = self.get_handler()
+            y = handler.processActivations(actbig, i % self.nLayersGot)
             if not y is None:
                 # overwrite the activations into llama.cpp
                 for j in range(len(vec)):
@@ -133,7 +150,6 @@ class SharedMem(threading.Thread):
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp")
         response = requests.post(url, json=data, headers=headers)
-        with open("response","w") as f: f.print(response)
         sout = response.json()
         print("Status code:", response.status_code)
         print("Response body:", len(sout))
@@ -147,7 +163,7 @@ class SharedMem(threading.Thread):
         return sout[0]['embedding']
      
 class AsyncScriptRunner:
-    def __init__(self, script_path, *args, env=None):
+    def __init__(self, script_path, *args, env=None, notify_event=None):
         self.script_path = script_path
         self.args = args
         self.env = env or {}
@@ -155,6 +171,7 @@ class AsyncScriptRunner:
         self.stdout_thread = None
         self.stderr_thread = None
         self.wait_event = threading.Event()  # Event to signal when text is found
+        self.notify_event = notify_event     # extra event to signal the shared mem thread
         self.trigger_text = None
 
     def _read_stream(self, stream, name):
@@ -166,6 +183,8 @@ class AsyncScriptRunner:
                 # Check if the line contains the trigger text
                 if self.trigger_text and self.trigger_text in line:
                     self.wait_event.set()
+                    if self.notify_event:
+                        self.notify_event.set()
         stream.close()
 
     def start(self, wait_for_text=None):
@@ -235,7 +254,11 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     os.system('rm /dev/shm/sem.py2c_sem')
     os.system('rm /dev/shm/sem.c2py_sem')
 
-    sm = SharedMem(len(connectedCPPLayers), activsHandler)
+    # set once llama.cpp prints the listening text: then SharedMem switches
+    # from the dummy handler to the real one
+    listening_event = threading.Event()
+
+    sm = SharedMem(len(connectedCPPLayers), activsHandler, listening_event)
     sm.start()
     os.system('rm -f layers2save')
     os.system('touch layers2save')
@@ -244,8 +267,14 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
                                "--embeddings", "--port", PORT,
-                               env={"SHOW_ACTIVS": "1"})
-    runner.start(wait_for_text="all slots are idle")
+                               env={"XHOW_ACTIVS": "1"},
+                               notify_event=listening_event)
+    # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
+    # "llama_server: listening on http://..." when it is really ready. While
+    # waiting we keep the SharedMem thread running, so any activations that
+    # llama.cpp sends during its own warmup or from a previous run are still
+    # captured (and discarded by activsHandler) instead of blocking llama.cpp.
+    runner.start(wait_for_text="llama_server: listening on http://")
     print("python main thread continues")
     time.sleep(1)
     return sm, runner
