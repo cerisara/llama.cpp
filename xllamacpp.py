@@ -4,6 +4,9 @@
 # Warning: the first time llama.cpp is run it will create and save the detembed matrix file: it'll then end with an error
 # and you'll have to terminate it with Ctrl-C. The next time, the code will run as expected.
 
+# set SAVE_EMB=1 to just save the embeddings and not share the activations
+# export SHOW_ACTIVS=1 to show the full stack of layers names
+
 import os
 import mmap
 import subprocess
@@ -54,7 +57,7 @@ class SharedMem(threading.Thread):
             print("now reading layer from shared buffer",i)
             vec = self.get_buffer_view()
             if len(vec)==0:
-                # when llamacpp quits, it warns this listener with an empty vector
+                # when llamacpp quits, it warns this listener with a the sentinel magic value 424242
                 print("python got empty c++ vector: signal to quit")
                 fincpp = True
                 break
@@ -137,9 +140,10 @@ class SharedMem(threading.Thread):
         return sout[0]['embedding']
      
 class AsyncScriptRunner:
-    def __init__(self, script_path, *args):
+    def __init__(self, script_path, *args, env=None):
         self.script_path = script_path
         self.args = args
+        self.env = env or {}
         self.process = None
         self.stdout_thread = None
         self.stderr_thread = None
@@ -176,7 +180,8 @@ class AsyncScriptRunner:
             bufsize=1,
             universal_newlines=True,
             preexec_fn=preexec_fn,
-            creationflags=creationflags
+            creationflags=creationflags,
+            env={**os.environ, **self.env}
         )
 
         # Start threads to read stdout and stderr
@@ -213,7 +218,11 @@ class AsyncScriptRunner:
                 print("Script stopped.")
  
 def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
-    assert("result_norm" in connectedCPPLayers, "Always connect last layer")
+    # TODO: check with a first dummy llama-server run that does not capture any
+    # activation but that just prints all model layers that the strings in
+    # connectedCPPLayers all belong to the printed model layers (and also try to
+    # guess what is the last output norm layer ??)
+
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
     os.system('rm /dev/shm/sem.py2c_sem')
@@ -228,8 +237,9 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     os.system("mkdir detlog")
 
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
-                               "--no-warmup","--ctx-size","30000","--cache-ram",
-                               "0", "--embeddings", "--port", PORT)
+                               "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
+                               "--embeddings", "--port", PORT,
+                               env={"SHOW_ACTIVS": "1"})
     runner.start(wait_for_text="all slots are idle")
     print("python main thread continues")
     time.sleep(1)
@@ -247,7 +257,9 @@ def helloworld():
             return None # do not modify activations
 
     handler = ActivsHandler()
-    connLayers = ['l_out-2','l_out-12','result_norm']
+    # WARNING: the last element MUST BE the last layer, just before the
+    # unembedding matrix, ie. after the last global norm
+    connLayers = ['l_out-2','l_out-12','norm']
     sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
     
     print("Triggering rollout to get activations...")

@@ -32,6 +32,7 @@
 #include <cstring>
 #include <vector>
 #include <cinttypes>
+#include <stdlib.h>
 
 static const char* SHM_NAME = "/ring_buffer_demo";
 static const char* SEM_C2P = "/c2py_sem";
@@ -246,19 +247,24 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
     }
 
-	// fprintf(stderr,"detdebug2 %s\n",t->name);
+	{
+		const char *detshowactivs = getenv("SHOW_ACTIVS");
+		if (detshowactivs!=NULL) fprintf(stderr,"detdebug2 %s\n",t->name);
+	}
     for (int i=0;i<1000;i++) {
         if (detsavelayer[i]==NULL) break;
 
         if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+			fprintf(stderr,"detsoncpp detected layer2send\n");
                 uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
                 detson_send_tensor(data, t->type, t->ne, t->nb);
 
                 if (detsavelayer[i+1]==NULL) {
                     if (shm->buffers[0][0] != 424242.0f) {
+						fprintf(stderr,"detsoncpp ecrase last activs\n");
                         // recopie la shared RAM dans le computation graph de llamacpp
                         int bufidx = 2; // skip the 2 first ints = dims
-                        uint8_t * data = (uint8_t *) t->data;
+                        uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
                         for (int64_t i3 = 0; i3 < t->ne[3]; i3++) {
                             for (int64_t i2 = 0; i2 < t->ne[2]; i2++) {
                                 for (int64_t i1 = 0; i1 < t->ne[1]; i1++) {
@@ -276,7 +282,11 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
                                 }
                             }
                         }
-                    }
+						if (!is_host) {
+							ggml_backend_tensor_set(t, cb_data->data.data(), 0, cb_data->data.size());
+						}
+						fprintf(stderr,"detsoncpp fini ecrase last activs\n");
+					}
                 }
             }
     }
@@ -393,13 +403,13 @@ int llama_server(common_params & params, int argc, char ** argv) {
         for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
         LOG_WRN("detsavelayer initialized\n");
         callback_data cb_data;
-        FILE *f = fopen("detembeds.bin","rb");
-        if (f==NULL) {
+		const char *detsaveemb = getenv("SAVE_EMB");
+		if (detsaveemb==NULL) {
+            LOG_WRN("detson will share activations\n");
+            params.cb_eval = detsoncb_share_activs;
+        } else {
             LOG_WRN("detson will save embeddings only\n");
             params.cb_eval = detsoncb_save_embeds;
-        } else {
-            params.cb_eval = detsoncb_share_activs;
-            fclose(f);
         }
         LOG_WRN("detcallback setup\n");
         params.cb_eval_user_data = &cb_data;
