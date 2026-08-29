@@ -23,6 +23,11 @@ SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+# for Dense + GPU
+OPTS = ["-ngl", "99",]
+# for MoE
+OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--ctx-size","32000"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -266,7 +271,7 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
 
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
-                               "--embeddings", "--port", PORT,
+                               "--embeddings", "--port", PORT, *OPTS,
                                env={"XHOW_ACTIVS": "1"},
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
