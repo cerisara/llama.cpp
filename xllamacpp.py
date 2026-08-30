@@ -20,12 +20,15 @@ import threading
 import signal
 import requests
 
-NTOKS2GEN = 50
+NTOKS2GEN = 5
 PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
+connLayers = ['l_out-16','norm']
+
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
+OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
 
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
@@ -307,7 +310,7 @@ class ActivsSaver:
     def __init__(self, outfile):
         self.outfile = outfile
         self.n = 0
-        self.f = open(outfile, "ab")
+        self.f = open(outfile, "wb")
 
     def save_one(self, actbig):
         shape = np.asarray(actbig.shape, dtype=np.int32)
@@ -365,7 +368,6 @@ def saveActivations(prompts_file):
     handler = ActivsHandler(outfile)
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
-    connLayers = ['l_out-2','l_out-12','norm']
     sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
 
     print("Triggering rollouts to get activations...")
