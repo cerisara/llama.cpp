@@ -391,6 +391,13 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
+# TODO The compareActivations is useless, delete it.
+# replace it by a code where we pass as argument the index of a token to be
+# generated: the program then loads the detembs.bin matrix that has been
+# previously saved by the same program (see above), get the vector embedding to
+# generate (only read this single embedding to save RAM), and inject this
+# embedding in the shared ram for the last layer of the prefill step only
+
 def compareActivations(prompts_file, infile):
     # preload a previously saved activation file, keep only the last connected
     # layer ('norm', ie. the last element of connLayers) of each forward pass,
