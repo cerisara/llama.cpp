@@ -1,6 +1,6 @@
 # This program launches llama.cpp and connects to it through a shared RAM memory zone and 2 semaphores
 # It exposes a method to run a rollout on a sentence and get the latent activations from llama.cpp
-# An example method helloworld() shows at the end how to use this code
+# An example method saveActivations() shows at the end how to use this code
 
 # WARNING: with MoE, the prefill may be splitted into several chunks!
 
@@ -11,6 +11,7 @@
 import os
 import sys
 import mmap
+import gzip
 import subprocess
 import numpy as np
 from posix_ipc import Semaphore, SharedMemory
@@ -19,6 +20,7 @@ import threading
 import signal
 import requests
 
+NTOKS2GEN = 50
 PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
@@ -148,7 +150,7 @@ class SharedMem(threading.Thread):
             print("ERROR ROLLOUT",prompt)
             return None,None
         url = "http://localhost:"+PORT+"/completions"
-        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 50}
+        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": NTOKS2GEN}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         response = requests.post(url, json=data, headers=headers)
@@ -297,23 +299,70 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     time.sleep(1)
     return sm, runner
 
-def helloworld(prompts_file):
+class ActivsSaver:
+    # streams each activation tensor to disk as its own gzip-compressed chunk,
+    # so only one tensor is ever held in RAM at a time.
+    # on-disk format per chunk:
+    #   int32 ndim, int32[ndim] shape, int64 len(compressed), gzip bytes
+    def __init__(self, outfile):
+        self.outfile = outfile
+        self.n = 0
+        self.f = open(outfile, "ab")
+
+    def save_one(self, actbig):
+        shape = np.asarray(actbig.shape, dtype=np.int32)
+        comp = gzip.compress(np.ascontiguousarray(actbig, dtype=np.float32).tobytes())
+        self.f.write(np.array([len(shape)], dtype=np.int32).tobytes())
+        self.f.write(shape.tobytes())
+        self.f.write(np.array([len(comp)], dtype=np.int64).tobytes())
+        self.f.write(comp)
+        self.f.flush()
+        self.n += 1
+
+    def close(self):
+        self.f.close()
+        print("saved "+str(self.n)+" activations to "+self.outfile)
+
+def load_activs(infile):
+    # reads back the chunks written by ActivsSaver, in order
+    activs = []
+    with open(infile, "rb") as f:
+        while True:
+            head = f.read(4)
+            if len(head) == 0: break
+            ndim = np.frombuffer(head, dtype=np.int32).item()
+            shape = np.frombuffer(f.read(4*ndim), dtype=np.int32).tolist()
+            nbytes = np.frombuffer(f.read(8), dtype=np.int64).item()
+            data = np.frombuffer(gzip.decompress(f.read(nbytes)), dtype=np.float32)
+            data.shape = shape
+            activs.append(data)
+    return activs
+
+def saveActivations(prompts_file):
     class ActivsHandler:
-        def __init__(self):
-            # We only want to print once.
+        def __init__(self, outfile):
+            # the real activs handler only runs after llama.cpp is listening,
+            # so the dummy activations captured during startup are not saved
             self.processed_once = threading.Event()
             self.n = 0
+            self.outfile = outfile
+            self.saver = ActivsSaver(outfile)
 
         def processActivations(self, actbig, i):
             self.n += 1
-            print("First 10 values of llama.cpp's activations "+str(i)+" shape="+str(actbig.shape)+": "+' '.join([str(x) for x in actbig.flatten()[:10]]))
-            if self.n == 2: self.processed_once.set()
+            print("saving activation "+str(i)+" shape="+str(actbig.shape))
+            self.saver.save_one(actbig)
+            self.processed_once.set()
             return None # do not modify activations
+
+        def save(self):
+            self.saver.close()
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
 
-    handler = ActivsHandler()
+    outfile = os.path.splitext(os.path.basename(prompts_file))[0] + "_activs.npz"
+    handler = ActivsHandler(outfile)
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
     connLayers = ['l_out-2','l_out-12','norm']
@@ -323,7 +372,9 @@ def helloworld(prompts_file):
     for utt in prompts:
         print("Prompt:", utt)
         s=sharedRAM.rollout_gen(utt)
-        print("GEN",s)
+        if not s==None:
+            print("GEN",s[0])
+            print("TOKGEN",s[1])
         time.sleep(1)
 
     print("Waiting for activations to be processed...")
@@ -334,10 +385,11 @@ def helloworld(prompts_file):
     procCPP.stop()
     print("Waiting for SharedMem thread to finish...")
     sharedRAM.join()
+    handler.save()
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python xllamacpp.py <prompts_file>  (one prompt per line)")
         sys.exit(1)
-    helloworld(sys.argv[1])
+    saveActivations(sys.argv[1])
 
