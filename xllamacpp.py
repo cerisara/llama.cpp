@@ -266,11 +266,13 @@ class AsyncScriptRunner:
                 self.stderr_thread.join()
                 print("Script stopped.")
  
-def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
+def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None):
     # TODO 1 check with a first dummy llama-server run that does not capture any
     # activation but that just prints all model layers that the strings in
     # connectedCPPLayers all belong to the printed model layers (and also try to
     # guess what is the last output norm layer ??)
+    if nLayersGot is None:
+        nLayersGot = len(connectedCPPLayers)
 
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
@@ -281,7 +283,7 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     # from the dummy handler to the real one
     listening_event = threading.Event()
 
-    sm = SharedMem(len(connectedCPPLayers), activsHandler, listening_event)
+    sm = SharedMem(nLayersGot, activsHandler, listening_event)
     sm.start()
     os.system('rm -f layers2save')
     os.system('touch layers2save')
@@ -389,9 +391,79 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
+def compareActivations(prompts_file, infile):
+    # preload a previously saved activation file, keep only the last connected
+    # layer ('norm', ie. the last element of connLayers) of each forward pass,
+    # and compare it against the same timesteps sent by this run.
+    class ActivsComparer:
+        def __init__(self, infile):
+            activs = load_activs(infile)
+            # the first forward pass is the prefill: it sends every connected
+            # layer with the same token count, so the number of leading tensors
+            # sharing that count is the number of layers really transmitted per
+            # pass (some configured layers may not exist in the model, eg. here
+            # only the final 'norm' layer is sent)
+            t0 = activs[0].shape[0]
+            self.nlayers = 0
+            for a in activs:
+                if a.shape[0] == t0:
+                    self.nlayers += 1
+                else:
+                    break
+            # the last tensor of each pass is the final norm layer
+            last = [a for idx, a in enumerate(activs) if idx % self.nlayers == self.nlayers - 1]
+            self.target = []
+            for a in last:
+                self.target.extend([v for v in a.reshape(-1, a.shape[-1])])
+            print("preloaded " + str(len(self.target)) + " last-layer vectors")
+            self.ft = 0
+
+        def processActivations(self, actbig, i):
+            # i is the per-pass layer index; the last one carries the final norm
+            if i == self.nlayers - 1:
+                vecs = [v for v in actbig.reshape(-1, actbig.shape[-1])]
+                for v in vecs:
+                    if self.ft < len(self.target):
+                        d = np.linalg.norm(v - self.target[self.ft])
+                        print("diff t=" + str(self.ft) + " diff_norm=" + str(d))
+                    else:
+                        print("t=" + str(self.ft) + " no preloaded vector")
+                    self.ft += 1
+            return None # do not modify activations
+
+    handler = ActivsComparer(infile)
+    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler, handler.nlayers)
+
+
+    with open(prompts_file) as f:
+        prompts = [line.rstrip('\n') for line in f if line.strip()]
+
+    print("Triggering rollouts to compare activations...")
+    for utt in prompts:
+        print("Prompt:", utt)
+        s = sharedRAM.rollout_gen(utt)
+        if not s == None:
+            print("GEN", s[0])
+            print("TOKGEN", s[1])
+        time.sleep(1)
+
+    print("Waiting for activations to be processed...")
+    time.sleep(2)
+
+    print("Stopping llama.cpp process...")
+    procCPP.stop()
+    print("Waiting for SharedMem thread to finish...")
+    sharedRAM.join()
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python xllamacpp.py <prompts_file>  (one prompt per line)")
+        print("Usage: python xllamacpp.py <prompts_file> [saved_activs_file]")
+        print("  without saved_activs_file: save activations to <prompts>_activs.npz")
+        print("  with saved_activs_file: preload it and diff its last layer vs this run")
         sys.exit(1)
-    saveActivations(sys.argv[1])
+    prompts_file = sys.argv[1]
+    if len(sys.argv) >= 3:
+        compareActivations(prompts_file, sys.argv[2])
+    else:
+        saveActivations(prompts_file)
 
