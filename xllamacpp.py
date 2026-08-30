@@ -26,8 +26,8 @@ modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 OPTS = ["-ngl", "99", "--temp", "0"]
 
-# modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-# OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap"]
+modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -146,7 +146,7 @@ class SharedMem(threading.Thread):
             print("ERROR ROLLOUT",prompt)
             return None,None
         url = "http://localhost:"+PORT+"/completions"
-        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 5}
+        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 0}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         response = requests.post(url, json=data, headers=headers)
@@ -282,7 +282,7 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
 
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
-                               "--embeddings", "--port", PORT, *OPTS,
+                               "--port", PORT, *OPTS,
                                env={"XHOW_ACTIVS": "1"},
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints

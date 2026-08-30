@@ -76,21 +76,12 @@ modified activations — consistent with pure in-place reinjection.
 
 ## Caveats
 
-- **Host-visible memory only**: the write-back uses `t->data` directly,
-  regardless of where the tensor lives. For non-host (e.g. GPU) buffers that's
-  a device pointer; the send path copies to `cb_data->data` for device
-  tensors, but the re-injection path does not. So it only works when the
-  hooked tensor's buffer is host-visible (or UMA).
 - **Stop-the-world cost**: the callback runs synchronously inside the
   scheduler loop, so each hooked layer stalls the whole decode until Python
   round-trips the ~40 MB segment.
 - **Fixed segment size**: the shm holds exactly 10M float32, so the hooked
   tensor must satisfy `ne[3]*ne[2]*ne[1]*ne[0] < 10_000_000` (e.g. during
   prefill with `n_tokens` prompt tokens: `n_tokens * n_embd < 10M`).
-- **First-run flag**: if `detembeds.bin` (server CWD) is missing, the server
-  registers `detsoncb_save_embeds` instead, dumps the unembedding matrix to
-  `detembeds.bin` on the first inference and `exit(1)`s. The file is then
-  only used as a flag to select the live shared-activations callback.
 
 ## Key locations
 
@@ -107,9 +98,6 @@ modified activations — consistent with pure in-place reinjection.
 | Shutdown sentinel write | `tools/server/server.cpp:461-463` |
 
 ## Consumer
-
-A consumer of the same protocol (activation collection for training) lives at
-`~/git/researchplm/ladder/` (`nancyactivs.py` + `xllamacpp.py`).
 
 The `xllamacpp.py` script in this directory is a self-contained consumer: it
 launches the modified `llama-server`, listens on the shared memory segment,
