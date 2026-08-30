@@ -403,6 +403,7 @@ def compareActivations(prompts_file, infile):
             # the last tensor of each pass is the final norm layer
             last = [a for idx, a in enumerate(activs) if idx % self.nlayers == self.nlayers - 1]
             # tous les last tensors sont des vectors (si le fichier saved avec /completions)
+            # BUG !!! on n'a pas le last tensor GOLD car il n'a pas ete calculé !!!!
             self.target = []
             for a in last:
                 # inutile, car les last-layers contiennent toujours 1 seul vector

@@ -4,7 +4,7 @@ echo 'La capitale de la Belgique est Bruxelles.' > tt
 python ./xllamacpp.py tt > ttgoods.log
 mv tt_activs.npz ttgoods.npz
 
-echo 'La capitale de la Belgique est ' > tt
+echo 'La capitale de la Belgique est' > tt
 python ./xllamacpp.py tt > ttbads.log
 mv tt_activs.npz ttbads.npz
 
