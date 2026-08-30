@@ -398,26 +398,22 @@ def compareActivations(prompts_file, infile):
     class ActivsComparer:
         def __init__(self, infile):
             activs = load_activs(infile)
-            # activs[0].shape = (T_prompt, dim)
-            tprompt = activs[0].shape[0]
-            # le prefill est repete Nlayer fois
-            self.nlayers = 0
-            for a in activs:
-                if a.shape[0] == tprompt:
-                    self.nlayers += 1
-                else:
-                    break
+            # activs = nlayers*n_gen_tokens, T_prompt | 1, dim
+            self.nlayers = len(connLayers)
             # the last tensor of each pass is the final norm layer
             last = [a for idx, a in enumerate(activs) if idx % self.nlayers == self.nlayers - 1]
+            # tous les last tensors sont des vectors (si le fichier saved avec /completions)
             self.target = []
             for a in last:
+                # inutile, car les last-layers contiennent toujours 1 seul vector
                 self.target.extend([v for v in a.reshape(-1, a.shape[-1])])
             print("preloaded " + str(len(self.target)) + " last-layer vectors")
+            # donc ft compte seulement les tokens generes!
             self.ft = 0
 
         def processActivations(self, actbig, i):
-            # i is the per-pass layer index; the last one carries the final norm
             if i == self.nlayers - 1:
+                # inutile, car les last-layers contiennent toujours 1 seul vector
                 vecs = [v for v in actbig.reshape(-1, actbig.shape[-1])]
                 replaced = []
                 for v in vecs:
@@ -430,7 +426,9 @@ def compareActivations(prompts_file, infile):
                     self.ft += 1
                 # ecrase: overwrite the received tensor with the preloaded one
                 if len(replaced) == len(vecs):
-                    return np.array(replaced)
+                    replaced = np.array(replaced, copy=True)
+                    print("///////////////////", replaced.shape, "layer", i, self.nlayers)
+                    return replaced
             return None # do not modify activations
 
     handler = ActivsComparer(infile)

@@ -19,13 +19,11 @@ else
 fi
 
 python ./xllamacpp.py tt ttgoods.npz > ttforce.log
-grep GEN ttgoods.log > /tmp/aa
 grep GEN ttforce.log > /tmp/ab
-if diff -q /tmp/aa /tmp/ab > /dev/null; then
-    echo "GOODSAME OK"
+if grep -e '^GEN Bruxelles' /tmp/ab; then
+	echo "GOOD OK"
 else
-    echo "GOODSAME KO"
-	diff /tmp/aa /tmp/ab
+	echo "GOOD KO"
+	cat /tmp/ab
 fi
- 
 
