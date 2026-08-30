@@ -422,13 +422,18 @@ def compareActivations(prompts_file, infile):
             # i is the per-pass layer index; the last one carries the final norm
             if i == self.nlayers - 1:
                 vecs = [v for v in actbig.reshape(-1, actbig.shape[-1])]
+                replaced = []
                 for v in vecs:
                     if self.ft < len(self.target):
                         d = np.linalg.norm(v - self.target[self.ft])
                         print("diff t=" + str(self.ft) + " diff_norm=" + str(d))
+                        replaced.append(self.target[self.ft])
                     else:
                         print("t=" + str(self.ft) + " no preloaded vector")
                     self.ft += 1
+                # ecrase: overwrite the received tensor with the preloaded one
+                if len(replaced) == len(vecs):
+                    return np.array(replaced)
             return None # do not modify activations
 
     handler = ActivsComparer(infile)
