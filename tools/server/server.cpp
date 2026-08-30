@@ -45,6 +45,7 @@ sem_t* sem_c2p;
 sem_t* sem_py2c;
 
 char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
+char *detsaveemb = NULL; // name of the unembeddings node to save, from SAVE_EMB
 struct callback_data {
     std::vector<uint8_t> data;
 };
@@ -102,24 +103,25 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
     if (ask) return true; // Always retrieve data
     const struct ggml_tensor * src0 = t->src[0];
 
-    if (src0!=NULL && !strncmp(src0->name,"output.weight",13)) {
+	fprintf(stderr,"DETSAVENODE %s %d %s %d %d\n",t->name,strlen(t->name),detsaveemb,strlen(detsaveemb),src0);
+    if (src0!=NULL && detsaveemb!=NULL && !strcmp(t->name,detsaveemb)) {
         auto * cb_data = (callback_data *) user_data;
         uint8_t * data = (uint8_t *) src0->data;
     
         // copy the data from the GPU memory if needed
         const bool is_host = ggml_backend_buffer_is_host(src0->buffer);
-        printf("saving embeddings %d %d\n", is_host, ggml_is_quantized(src0->type));
+        fprintf(stderr,"saving embeddings %d %d\n", is_host, ggml_is_quantized(src0->type));
         if (!is_host) {
             auto n_bytes = ggml_nbytes(src0);
             cb_data->data.resize(n_bytes);
             ggml_backend_tensor_get(src0, cb_data->data.data(), 0, n_bytes);
-            printf("ERROR GPU not implemented yet");
+            fprintf(stderr,"ERROR GPU not implemented yet");
         }       
 
         // save unembedding matrix
         if (src0->type != GGML_TYPE_F32) {
             auto nels = ggml_nelements(src0);
-            printf("dequantizing... %d %d %d %d %d\n",nels,
+            fprintf(stderr,"dequantizing... %d %d %d %d %d\n",nels,
                     src0->ne[3],
                     src0->ne[2],
                     src0->ne[1],
@@ -140,6 +142,7 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
             printf("Embeddings saved; you can rerun the program!");
             exit(1);
         }
+		fprintf(stderr,"DETSAVEEMBED FINI\n");
     }
     return true;
 }
@@ -412,7 +415,8 @@ int llama_server(common_params & params, int argc, char ** argv) {
         for (int i=0;i<1000;i++) detsavelayer[i]=NULL;
         LOG_WRN("detsavelayer initialized\n");
         callback_data cb_data;
-		const char *detsaveemb = getenv("SAVE_EMB");
+		const char *detsaveemb_env = getenv("SAVE_EMB");
+		if (detsaveemb_env!=NULL) detsaveemb=strdup(detsaveemb_env);
 		if (detsaveemb==NULL) {
             LOG_WRN("detson will share activations\n");
             params.cb_eval = detsoncb_share_activs;

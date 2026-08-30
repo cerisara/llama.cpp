@@ -5,7 +5,7 @@
 # WARNING: with MoE, the prefill may be splitted into several chunks!
 
 # Environment variables to control the program:
-# SAVE_EMB=1 to just save the embeddings and not share the activations
+# SAVE_EMB=result_output to save the embeddings
 # SHOW_ACTIVS=1 to show the full stack of layers names from the model
 
 import os
@@ -31,6 +31,7 @@ modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
 
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+# TODO if SAVE_EMB is set, then use ngl 0 !!
 OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
 
 # modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
@@ -156,6 +157,10 @@ class SharedMem(threading.Thread):
         data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": NTOKS2GEN}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
+        # print the token ids of the prompt, as the completions response only
+        # returns the generated tokens
+        ptoks = self.tokenize(prompt)
+        print("PROMPT_TOKENS", ptoks)
         response = requests.post(url, json=data, headers=headers)
         sout = response.json()
         print("Status code:", response.status_code)
@@ -391,62 +396,46 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
-# TODO The compareActivations is useless, delete it.
-# replace it by a code where we pass as argument the index of a token to be
-# generated: the program then loads the detembs.bin matrix that has been
-# previously saved by the same program (see above), get the vector embedding to
-# generate (only read this single embedding to save RAM), and inject this
-# embedding in the shared ram for the last layer of the prefill step only
+def injectActivation(prompts_file, token_index):
+    # read only the embedding of a single token from the unembedding matrix
+    # that this program saved earlier (run it with SAVE_EMB to produce
+    # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
+    with open("detembeds.dims") as f:
+        ne3 = int(f.readline().strip())
+        ne2 = int(f.readline().strip())
+        ne1 = int(f.readline().strip())
+        ne0 = int(f.readline().strip())
+    if token_index >= ne1:
+        print("ERROR token index " + str(token_index) + " out of range (vocab=" + str(ne1) + ")")
+        return
+    with open("detembeds.bin", "rb") as f:
+        # output.weight is [ne1 rows, ne0 cols], so row token_index starts here
+        f.seek(token_index * ne0 * 4)
+        emb = np.frombuffer(f.read(ne0 * 4), dtype=np.float32).copy()
+    print("loaded embedding for token " + str(token_index) + " dim=" + str(len(emb)))
 
-def compareActivations(prompts_file, infile):
-    # preload a previously saved activation file, keep only the last connected
-    # layer ('norm', ie. the last element of connLayers) of each forward pass,
-    # and compare it against the same timesteps sent by this run.
-    class ActivsComparer:
-        def __init__(self, infile):
-            activs = load_activs(infile)
-            # activs = nlayers*n_gen_tokens, T_prompt | 1, dim
-            self.nlayers = len(connLayers)
-            # the last tensor of each pass is the final norm layer
-            last = [a for idx, a in enumerate(activs) if idx % self.nlayers == self.nlayers - 1]
-            # tous les last tensors sont des vectors (si le fichier saved avec /completions)
-            # BUG !!! on n'a pas le last tensor GOLD car il n'a pas ete calculé !!!!
-            self.target = []
-            for a in last:
-                # inutile, car les last-layers contiennent toujours 1 seul vector
-                self.target.extend([v for v in a.reshape(-1, a.shape[-1])])
-            print("preloaded " + str(len(self.target)) + " last-layer vectors")
-            # donc ft compte seulement les tokens generes!
-            self.ft = 0
+    class ActivsInjector:
+        # overwrites the last connected layer with the target embedding during
+        # the prefill only, so the model is forced to generate the target token
+        def __init__(self, emb, nlayers):
+            self.emb = emb
+            self.nlayers = nlayers
+            self.injected = False
 
         def processActivations(self, actbig, i):
-            if i == self.nlayers - 1:
-                # inutile, car les last-layers contiennent toujours 1 seul vector
-                vecs = [v for v in actbig.reshape(-1, actbig.shape[-1])]
-                replaced = []
-                for v in vecs:
-                    if self.ft < len(self.target):
-                        d = np.linalg.norm(v - self.target[self.ft])
-                        print("diff t=" + str(self.ft) + " diff_norm=" + str(d))
-                        replaced.append(self.target[self.ft])
-                    else:
-                        print("t=" + str(self.ft) + " no preloaded vector")
-                    self.ft += 1
-                # ecrase: overwrite the received tensor with the preloaded one
-                if len(replaced) == len(vecs):
-                    replaced = np.array(replaced, copy=True)
-                    print("///////////////////", replaced.shape, "layer", i, self.nlayers)
-                    return replaced
+            if not self.injected and i == self.nlayers - 1:
+                print("injecting target embedding at last layer (prefill) shape=" + str(actbig.shape))
+                self.injected = True
+                return np.broadcast_to(self.emb, actbig.shape).copy()
             return None # do not modify activations
 
-    handler = ActivsComparer(infile)
-    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler, handler.nlayers)
-
+    handler = ActivsInjector(emb, len(connLayers))
+    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
 
-    print("Triggering rollouts to compare activations...")
+    print("Triggering rollouts with injected embedding...")
     for utt in prompts:
         print("Prompt:", utt)
         s = sharedRAM.rollout_gen(utt)
@@ -464,14 +453,15 @@ def compareActivations(prompts_file, infile):
     sharedRAM.join()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python xllamacpp.py <prompts_file> [saved_activs_file]")
-        print("  without saved_activs_file: save activations to <prompts>_activs.npz")
-        print("  with saved_activs_file: preload it and diff its last layer vs this run")
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("Usage: python xllamacpp.py <prompts_file> [token_index]")
+        print("  without token_index: save activations to <prompts>_activs.npz")
+        print("  with token_index: load detembeds.bin and inject the embedding")
+        print("    of that token into the last layer at the prefill step")
         sys.exit(1)
     prompts_file = sys.argv[1]
     if len(sys.argv) >= 3:
-        compareActivations(prompts_file, sys.argv[2])
+        injectActivation(prompts_file, int(sys.argv[2]))
     else:
         saveActivations(prompts_file)
 
