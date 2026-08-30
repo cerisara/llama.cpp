@@ -2,6 +2,8 @@
 # It exposes a method to run a rollout on a sentence and get the latent activations from llama.cpp
 # An example method helloworld() shows at the end how to use this code
 
+# WARNING: with MoE, the prefill may be splitted into several chunks!
+
 # Environment variables to control the program:
 # SAVE_EMB=1 to just save the embeddings and not share the activations
 # SHOW_ACTIVS=1 to show the full stack of layers names from the model
@@ -26,8 +28,8 @@ modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
 
-modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-OPTS = ["--embeddings", "--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
+# modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+# OPTS = ["--embeddings", "--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -146,7 +148,7 @@ class SharedMem(threading.Thread):
             print("ERROR ROLLOUT",prompt)
             return None,None
         url = "http://localhost:"+PORT+"/completions"
-        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 0}
+        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 50}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         response = requests.post(url, json=data, headers=headers)
