@@ -152,8 +152,8 @@ class SharedMem(threading.Thread):
         sout = response.json()
         print("Status code:", response.status_code)
         print("Response body:", len(sout))
-        if str(response.status_code)[0]!="2": return None
-        # return sout[0]['content']
+        if str(response.status_code)[0]=="2" and sout!=None: return sout['content'], sout['tokens']
+        return None
  
     def rollout_train(self, prompt):
         if '"' in prompt: 
@@ -313,7 +313,8 @@ def helloworld():
     
     print("Triggering rollout to get activations...")
     utt = "The sounds of time for me are running low"
-    sharedRAM.rollout_gen(utt)
+    s=sharedRAM.rollout_gen(utt)
+    print("GEN",s)
 
     print("Waiting for activations to be processed...")
     processed = handler.processed_once.wait(timeout=10) # Wait for 10 seconds max
