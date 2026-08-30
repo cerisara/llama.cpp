@@ -398,15 +398,12 @@ def compareActivations(prompts_file, infile):
     class ActivsComparer:
         def __init__(self, infile):
             activs = load_activs(infile)
-            # the first forward pass is the prefill: it sends every connected
-            # layer with the same token count, so the number of leading tensors
-            # sharing that count is the number of layers really transmitted per
-            # pass (some configured layers may not exist in the model, eg. here
-            # only the final 'norm' layer is sent)
-            t0 = activs[0].shape[0]
+            # activs[0].shape = (T_prompt, dim)
+            tprompt = activs[0].shape[0]
+            # le prefill est repete Nlayer fois
             self.nlayers = 0
             for a in activs:
-                if a.shape[0] == t0:
+                if a.shape[0] == tprompt:
                     self.nlayers += 1
                 else:
                     break
