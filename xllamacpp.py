@@ -1,11 +1,10 @@
 # This program launches llama.cpp and connects to it through a shared RAM memory zone and 2 semaphores
 # It exposes a method to run a rollout on a sentence and get the latent activations from llama.cpp
 # An example method helloworld() shows at the end how to use this code
-# Warning: the first time llama.cpp is run it will create and save the detembed matrix file: it'll then end with an error
-# and you'll have to terminate it with Ctrl-C. The next time, the code will run as expected.
 
-# set SAVE_EMB=1 to just save the embeddings and not share the activations
-# export SHOW_ACTIVS=1 to show the full stack of layers names
+# Environment variables to control the program:
+# SAVE_EMB=1 to just save the embeddings and not share the activations
+# SHOW_ACTIVS=1 to show the full stack of layers names from the model
 
 import os
 import mmap
@@ -22,12 +21,12 @@ SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
+
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-# for Dense + GPU
-OPTS = ["-ngl", "99",]
-# for MoE
-OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--ctx-size","32000"]
+OPTS = ["-ngl", "99"]
+
+# modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+# OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -141,19 +140,30 @@ class SharedMem(threading.Thread):
         protoks = sout['tokens'] 
         return protoks
  
-    def rollout(self, prompt):
+    def rollout_gen(self, prompt):
         if '"' in prompt: 
             print("ERROR ROLLOUT",prompt)
             return None,None
-        # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu
-        # en dernier via l'API completions; mais on ne peux plus beneficier du KV-cache:
-        # ca ne sert a rien a train time, mais a test time il faudra donc utiliser l'API completion !
-        # TODO: check ACC a test time avec completion after train avec embeddings
-
+        url = "http://localhost:"+PORT+"/completions"
+        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": 5}
+        headers = { "Content-Type": "application/json" }
+        print("sending prompt to llama.cpp completions")
+        response = requests.post(url, json=data, headers=headers)
+        sout = response.json()
+        print("Status code:", response.status_code)
+        print("Response body:", len(sout))
+        if str(response.status_code)[0]!="2": return None
+        # return sout[0]['content']
+ 
+    def rollout_train(self, prompt):
+        if '"' in prompt: 
+            print("ERROR ROLLOUT",prompt)
+            return None,None
+        # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
         url = "http://localhost:"+PORT+"/embeddings"
         data = {"content" : prompt, "return_tokens": True, "cache_prompt": False}
         headers = { "Content-Type": "application/json" }
-        print("sending prompt to llama.cpp")
+        print("sending prompt to llama.cpp embeddings")
         response = requests.post(url, json=data, headers=headers)
         sout = response.json()
         print("Status code:", response.status_code)
@@ -165,7 +175,7 @@ class SharedMem(threading.Thread):
         # reptoks = sout['tokens']
         # rep = sout['content']
         # return rep,reptoks
-        return sout[0]['embedding']
+        # return sout[0]['embedding']
      
 class AsyncScriptRunner:
     def __init__(self, script_path, *args, env=None, notify_event=None):
@@ -249,7 +259,7 @@ class AsyncScriptRunner:
                 print("Script stopped.")
  
 def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
-    # TODO: check with a first dummy llama-server run that does not capture any
+    # TODO 1 check with a first dummy llama-server run that does not capture any
     # activation but that just prints all model layers that the strings in
     # connectedCPPLayers all belong to the printed model layers (and also try to
     # guess what is the last output norm layer ??)
@@ -291,7 +301,7 @@ def helloworld():
             self.processed_once = threading.Event()
 
         def processActivations(self, actbig, i):
-            print("First 10 values of llama.cpp's activations "+str(i)+": "+' '.join([str(x) for x in actbig.flatten()[:10]]))
+            print("First 10 values of llama.cpp's activations "+str(i)+" shape="+str(actbig.shape)+": "+' '.join([str(x) for x in actbig.flatten()[:10]]))
             if i == 2: self.processed_once.set()
             return None # do not modify activations
 
@@ -303,7 +313,7 @@ def helloworld():
     
     print("Triggering rollout to get activations...")
     utt = "The sounds of time for me are running low"
-    sharedRAM.rollout(utt)
+    sharedRAM.rollout_gen(utt)
 
     print("Waiting for activations to be processed...")
     processed = handler.processed_once.wait(timeout=10) # Wait for 10 seconds max
