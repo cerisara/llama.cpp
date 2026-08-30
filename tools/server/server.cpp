@@ -149,8 +149,17 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
     const struct ggml_tensor * src0 = t->src[0];
     const struct ggml_tensor * src1 = t->src[1];
 
-    // Debug block to inspect inputs and output of the final matrix multiplication
-    if (t->op == GGML_OP_MUL_MAT && src0 != NULL && strncmp(src0->name, "output.weight", 13) == 0) {
+	// Debug block to inspect inputs and output of the final matrix multiplication
+	/* WARNING: this creates a crash with MoE !!!!!
+	   Why does it read OOB specifically on MoE? With --n-cpu-moe 30 the graph
+	   is split across GPU/CPU, and the last-layer tensors the eval callback
+	   sees are partial/split views; the debug block's
+	   ggml_backend_tensor_get(...) + offset math ((ne[1]-1)*ne[0]*...) overruns
+	   the tensor's real allocation. Dense with -ngl 99 has no such splits, so
+	   it doesn't crash.
+	   */
+	/*
+	if (t->op == GGML_OP_MUL_MAT && src0 != NULL && strncmp(src0->name, "output.weight", 13) == 0) {
         printf("\n--- [DEBUG] Logits Calculation Detected ---\n");
 
         // Helper lambda to print the first few values of a tensor
@@ -237,7 +246,7 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
             printf("[DEBUG] Output logits tensor is not F32.\n");
         }
         printf("--- [DEBUG] End Logits Calculation ---\n\n");
-    }
+    }*/
 
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(t->buffer);

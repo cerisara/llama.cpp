@@ -24,10 +24,10 @@ SEM_P2C = "/py2c_sem"
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-OPTS = ["-ngl", "99", "--temp", "0"]
+OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
 
 modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
+OPTS = ["--embeddings", "--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
