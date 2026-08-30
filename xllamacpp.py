@@ -7,6 +7,7 @@
 # SHOW_ACTIVS=1 to show the full stack of layers names from the model
 
 import os
+import sys
 import mmap
 import subprocess
 import numpy as np
@@ -23,7 +24,7 @@ SEM_P2C = "/py2c_sem"
 modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
 
 modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-OPTS = ["-ngl", "99"]
+OPTS = ["-ngl", "99", "--temp", "0"]
 
 # modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
 # OPTS = ["--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap"]
@@ -294,27 +295,34 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler):
     time.sleep(1)
     return sm, runner
 
-def helloworld():
+def helloworld(prompts_file):
     class ActivsHandler:
         def __init__(self):
             # We only want to print once.
             self.processed_once = threading.Event()
+            self.n = 0
 
         def processActivations(self, actbig, i):
+            self.n += 1
             print("First 10 values of llama.cpp's activations "+str(i)+" shape="+str(actbig.shape)+": "+' '.join([str(x) for x in actbig.flatten()[:10]]))
-            if i == 2: self.processed_once.set()
+            if self.n == 2: self.processed_once.set()
             return None # do not modify activations
+
+    with open(prompts_file) as f:
+        prompts = [line.rstrip('\n') for line in f if line.strip()]
 
     handler = ActivsHandler()
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
     connLayers = ['l_out-2','l_out-12','norm']
     sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
-    
-    print("Triggering rollout to get activations...")
-    utt = "The sounds of time for me are running low"
-    s=sharedRAM.rollout_gen(utt)
-    print("GEN",s)
+
+    print("Triggering rollouts to get activations...")
+    for utt in prompts:
+        print("Prompt:", utt)
+        s=sharedRAM.rollout_gen(utt)
+        print("GEN",s)
+        time.sleep(1)
 
     print("Waiting for activations to be processed...")
     processed = handler.processed_once.wait(timeout=10) # Wait for 10 seconds max
@@ -326,5 +334,8 @@ def helloworld():
     sharedRAM.join()
 
 if __name__ == "__main__":
-    helloworld()
+    if len(sys.argv) < 2:
+        print("Usage: python xllamacpp.py <prompts_file>  (one prompt per line)")
+        sys.exit(1)
+    helloworld(sys.argv[1])
 
