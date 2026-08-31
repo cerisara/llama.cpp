@@ -1,7 +1,6 @@
 source ~/envs/transformers/bin/activate
 
 # before running this, you have to inspect which node is the unembedding node
-embnode="embd"
 embnode="result_output"
 # TODO: modifier llama.cpp pour qu'il regarde tous les nodes de fin en cherchant
 # le node qui contient une matrice qui ressemble à une matrice de unembedding
