@@ -1,14 +1,9 @@
 source ~/envs/transformers/bin/activate
 
-# before running this, you have to inspect which node is the unembedding node
-embnode="result_output"
-# TODO: modifier llama.cpp pour qu'il regarde tous les nodes de fin en cherchant
-# le node qui contient une matrice qui ressemble à une matrice de unembedding
-
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
-NTOKS=0 SAVE_EMB="$embnode" python ./xllamacpp.py tt
+NTOKS=0 SAVE_EMB=1 python ./xllamacpp.py tt > saveemb
 
 NTOKS=1 python ./xllamacpp.py tt > repgld
 

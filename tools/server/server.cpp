@@ -45,7 +45,7 @@ sem_t* sem_c2p;
 sem_t* sem_py2c;
 
 char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
-char *detsaveemb = NULL; // name of the unembeddings node to save, from SAVE_EMB
+char *detsaveemb = NULL; // when set (from SAVE_EMB), save embeddings then stop
 int detembsaved = 0; // once saved, do not save it again
 struct callback_data {
     std::vector<uint8_t> data;
@@ -266,9 +266,17 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
     if (ask) return true; // Always retrieve data
 	if (detembsaved==1) return detsoncb_share_activs(t, ask, user_data);
     const struct ggml_tensor * src0 = t->src[0];
+    const struct ggml_tensor * src1 = t->src[1];
 
-	fprintf(stderr,"DETSAVENODE %s %d %s %d %d\n",t->name,strlen(t->name),detsaveemb,strlen(detsaveemb),src0);
-    if (src0!=NULL && detsaveemb!=NULL && !strcmp(t->name,detsaveemb)) {
+	fprintf(stderr,"DETSAVENODE %lld %lld %lld %lld\n",
+            src0!=NULL ? (long long) src0->ne[0] : -1,
+            src0!=NULL ? (long long) src0->ne[1] : -1,
+            src1!=NULL ? (long long) src1->ne[0] : -1,
+            src1!=NULL ? (long long) src1->ne[1] : -1);
+    // detect the unembedding matrix by its dims, no node name needed: only the
+    // vocab dim exceeds 100000, and the latent dim matches the activations src1
+    if (detsaveemb!=NULL && t->op == GGML_OP_MUL_MAT && src0!=NULL && src1!=NULL &&
+        (src0->ne[0] > 100000 || src0->ne[1] > 100000)) {
         auto * cb_data = (callback_data *) user_data;
         uint8_t * data = (uint8_t *) src0->data;
     
@@ -423,7 +431,7 @@ int llama_server(common_params & params, int argc, char ** argv) {
         LOG_WRN("detsavelayer initialized\n");
         callback_data cb_data;
 		const char *detsaveemb_env = getenv("SAVE_EMB");
-		if (detsaveemb_env!=NULL) detsaveemb=strdup(detsaveemb_env);
+		if (detsaveemb_env!=NULL) detsaveemb=strdup(detsaveemb_env); // SAVE_EMB only enables saving; the unembedding node is found by its dims
 		if (detsaveemb==NULL) {
             LOG_WRN("detson will share activations\n");
             params.cb_eval = detsoncb_share_activs;
