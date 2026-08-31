@@ -1,7 +1,8 @@
 # Reads back the activation file written by ActivsSaver in xllamacpp.py
 # Usage:
 #   python read_activs.py <file>                 # summary of all chunks
-#   python read_activs.py <file> -i 5            # show first values of chunk 5
+#   python read_activs.py <file> <index> [<dim>]  # show first 5 values of the given tensor
+#                 <dim>: slice along first dim; defaults to the last vector
 #   python read_activs.py <file> --save out.npz  # dump all chunks to a .npz file
 
 import sys
@@ -34,16 +35,24 @@ def main():
 
     infile = sys.argv[1]
     index = None
+    dim = None
     outfile = None
     args = sys.argv[2:]
     while args:
-        if args[0] == "-i":
-            index = int(args[1])
-            args = args[2:]
-        elif args[0] == "--save":
+        if args[0] == "--save":
             outfile = args[1]
             args = args[2:]
         else:
+            # positional args: tensor index, then first-dim slice
+            try:
+                if index is None:
+                    index = int(args[0])
+                elif dim is None:
+                    dim = int(args[0])
+                else:
+                    print("ignoring unknown argument: " + args[0])
+            except ValueError:
+                print("ignoring unknown argument: " + args[0])
             args = args[1:]
 
     print("reading " + infile)
@@ -59,9 +68,16 @@ def main():
             print("index " + str(index) + " out of range")
             sys.exit(1)
         arr = activs[index]
-        print("chunk " + str(index) + " shape=" + str(arr.shape))
-        print("first 10 values: " + " ".join([str(x) for x in arr.flatten()[:10]]))
-        print("min=" + str(arr.min()) + " max=" + str(arr.max()) + " mean=" + str(arr.mean()))
+        default_dim = arr.shape[0] - 1
+        d = dim if dim is not None else default_dim
+        if d < 0 or d >= arr.shape[0]:
+            print("dim " + str(d) + " out of range (0.." + str(arr.shape[0] - 1) + ")")
+            sys.exit(1)
+        print("tensor " + str(index) + " shape=" + str(arr.shape) + " dim=" + str(d))
+        arr = arr[d]
+        arr.tofile("onevec.bin")
+        print("saved vector to onevec.bin")
+        print("first 5 values: " + " ".join([str(x) for x in arr.flatten()[:5]]))
         return
 
     # summary of every chunk
