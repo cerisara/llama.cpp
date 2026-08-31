@@ -46,6 +46,7 @@ sem_t* sem_py2c;
 
 char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
 char *detsaveemb = NULL; // name of the unembeddings node to save, from SAVE_EMB
+int detembsaved = 0; // once saved, do not save it again
 struct callback_data {
     std::vector<uint8_t> data;
 };
@@ -99,53 +100,7 @@ static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * n
     sem_post(sem_c2p);
     int r = sem_wait(sem_py2c);
 }
-static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
-    if (ask) return true; // Always retrieve data
-    const struct ggml_tensor * src0 = t->src[0];
 
-	fprintf(stderr,"DETSAVENODE %s %d %s %d %d\n",t->name,strlen(t->name),detsaveemb,strlen(detsaveemb),src0);
-    if (src0!=NULL && detsaveemb!=NULL && !strcmp(t->name,detsaveemb)) {
-        auto * cb_data = (callback_data *) user_data;
-        uint8_t * data = (uint8_t *) src0->data;
-    
-        // copy the data from the GPU memory if needed
-        const bool is_host = ggml_backend_buffer_is_host(src0->buffer);
-        fprintf(stderr,"saving embeddings %d %d\n", is_host, ggml_is_quantized(src0->type));
-        if (!is_host) {
-            auto n_bytes = ggml_nbytes(src0);
-            cb_data->data.resize(n_bytes);
-            ggml_backend_tensor_get(src0, cb_data->data.data(), 0, n_bytes);
-            fprintf(stderr,"ERROR GPU not implemented yet");
-        }       
-
-        // save unembedding matrix
-        if (src0->type != GGML_TYPE_F32) {
-            auto nels = ggml_nelements(src0);
-            fprintf(stderr,"dequantizing... %d %d %d %d %d\n",nels,
-                    src0->ne[3],
-                    src0->ne[2],
-                    src0->ne[1],
-                    src0->ne[0]);
-            ggml_type_traits qtype = *ggml_get_type_traits(src0->type);
-            std::vector<uint8_t> dequant_buf(nels * sizeof(float));
-            qtype.to_float(data, (float *)dequant_buf.data(), nels);
-            float *dqbuf = (float *)dequant_buf.data();
-            FILE *f = fopen("detembeds.dims","w");
-			fprintf(f,"%d\n",src0->ne[3]);
-            fprintf(f,"%d\n",src0->ne[2]);
-            fprintf(f,"%d\n",src0->ne[1]);
-            fprintf(f,"%d\n",src0->ne[0]);
-            fclose(f);
-            f = fopen("detembeds.bin","wb");
-            fwrite(dqbuf,sizeof(float),nels,f);
-            fclose(f);
-            printf("Embeddings saved; you can rerun the program!");
-            exit(1);
-        }
-		fprintf(stderr,"DETSAVEEMBED FINI\n");
-    }
-    return true;
-}
 static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_data) {
     if (ask) return true; // Always retrieve data
     auto * cb_data = (callback_data *) user_data;
@@ -303,6 +258,58 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
             }
     }
     return true;
+}
+
+void llama_server_terminate();
+
+static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
+    if (ask) return true; // Always retrieve data
+	if (detembsaved==1) return detsoncb_share_activs(t, ask, user_data);
+    const struct ggml_tensor * src0 = t->src[0];
+
+	fprintf(stderr,"DETSAVENODE %s %d %s %d %d\n",t->name,strlen(t->name),detsaveemb,strlen(detsaveemb),src0);
+    if (src0!=NULL && detsaveemb!=NULL && !strcmp(t->name,detsaveemb)) {
+        auto * cb_data = (callback_data *) user_data;
+        uint8_t * data = (uint8_t *) src0->data;
+    
+        // copy the data from the GPU memory if needed
+        const bool is_host = ggml_backend_buffer_is_host(src0->buffer);
+        fprintf(stderr,"saving embeddings %d %d\n", is_host, ggml_is_quantized(src0->type));
+        if (!is_host) {
+            auto n_bytes = ggml_nbytes(src0);
+            cb_data->data.resize(n_bytes);
+            ggml_backend_tensor_get(src0, cb_data->data.data(), 0, n_bytes);
+            fprintf(stderr,"ERROR GPU not implemented yet");
+        }       
+
+        // save unembedding matrix
+        if (src0->type != GGML_TYPE_F32) {
+            auto nels = ggml_nelements(src0);
+            fprintf(stderr,"dequantizing... %d %d %d %d %d\n",nels,
+                    src0->ne[3],
+                    src0->ne[2],
+                    src0->ne[1],
+                    src0->ne[0]);
+            ggml_type_traits qtype = *ggml_get_type_traits(src0->type);
+            std::vector<uint8_t> dequant_buf(nels * sizeof(float));
+            qtype.to_float(data, (float *)dequant_buf.data(), nels);
+            float *dqbuf = (float *)dequant_buf.data();
+            FILE *f = fopen("detembeds.dims","w");
+			fprintf(f,"%d\n",src0->ne[3]);
+            fprintf(f,"%d\n",src0->ne[2]);
+            fprintf(f,"%d\n",src0->ne[1]);
+            fprintf(f,"%d\n",src0->ne[0]);
+            fclose(f);
+            f = fopen("detembeds.bin","wb");
+            fwrite(dqbuf,sizeof(float),nels,f);
+            fclose(f);
+            printf("Embeddings saved; you can rerun the program!");
+			detembsaved=1;
+            llama_server_terminate();
+        }
+		fprintf(stderr,"DETSAVEEMBED FINI\n");
+    }
+	return detsoncb_share_activs(t, ask, user_data);
 }
 
 static std::function<void(int)> shutdown_handler;

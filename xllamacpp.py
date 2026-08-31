@@ -20,22 +20,34 @@ import threading
 import signal
 import requests
 
-NTOKS2GEN = 5
+NTOKS2GEN = int(os.environ.get("NTOKS", 5))
 PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
 connLayers = ['l_out-16','norm']
 
-modnom="/home/xtof/Qwen3-8B-Q5_K_M.gguf"
-OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
+# model registry: (path, is_moe). Pick one by editing the selection line below
+MODELS = [
+    ("/home/xtof/Qwen3-8B-Q5_K_M.gguf", False),
+    ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
+    ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
+]
+modnom, is_moe = MODELS[0]
 
-modnom="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-# TODO if SAVE_EMB is set, then use ngl 0 !!
-OPTS = ["--embeddings", "-ngl", "99", "--temp", "0"]
-
-# modnom="/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-# OPTS = ["--embeddings", "--n-gpu-layers", "999", "--n-cpu-moe", "30", "--no-mmap", "--temp", "0"]
+# SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
+# works when that tensor is whole and in host memory: run all layers on CPU
+# (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
+save_emb = bool(os.environ.get("SAVE_EMB"))
+if is_moe:
+    OPTS = ["--embeddings", "--no-mmap", "--temp", "0"]
+    if not save_emb:
+        # push the experts of the first 30 layers to RAM to fit the 35B on GPU
+        OPTS += ["--n-gpu-layers", "999", "--n-cpu-moe", "30"]
+    else:
+        OPTS += ["--n-gpu-layers", "0"]
+else:
+    OPTS = ["--embeddings", "-ngl", "0" if save_emb else "99", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
