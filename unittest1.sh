@@ -8,7 +8,6 @@ echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
 NTOKS=0 SAVE_EMB="$embnode" python ./xllamacpp.py tt
-exit
 
 python ./xllamacpp.py tt > repgld
 cat repgld | grep PROMPT_TOKENS > ttt
