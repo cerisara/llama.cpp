@@ -25,7 +25,7 @@ PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
-connLayers = ['l_out-16','l_out-34','norm']
+connLayers = ['l_out-16','norm']
 
 # model registry: (path, is_moe). Pick one by editing the selection line below
 MODELS = [
@@ -33,7 +33,7 @@ MODELS = [
     ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
 ]
-modnom, is_moe = MODELS[2]
+modnom, is_moe = MODELS[0]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -174,7 +174,7 @@ class SharedMem(threading.Thread):
     def rollout_gen(self, prompt):
         url = "http://localhost:"+PORT+"/completions"
         data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False,
-                "logits_all": True, "n_predict": NTOKS2GEN}
+                "n_predict": NTOKS2GEN}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         # print the token ids of the prompt, as the completions response only
