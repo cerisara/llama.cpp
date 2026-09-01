@@ -173,7 +173,8 @@ class SharedMem(threading.Thread):
  
     def rollout_gen(self, prompt):
         url = "http://localhost:"+PORT+"/completions"
-        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": NTOKS2GEN}
+        data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False,
+                "logits_all": True, "n_predict": NTOKS2GEN}
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         # print the token ids of the prompt, as the completions response only
