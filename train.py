@@ -42,9 +42,17 @@ assert all(len(v) == len(toks) for v in layer_vecs), "layer vectors must match t
 X = np.concatenate(layer_vecs, axis=1)  # (ntoks, 2*dim) input pairs
 
 # the target is the embedding of the token id at t+1 (shifted right wrt t)
+# the unembedding matrix is stored row by row (one row per token), so the
+# shape is (vocab_size, n_embd); read it from the dims file written by
+# SAVE_EMB in xllamacpp.py so other LLMs work too
+with open("detembeds.dims") as f:
+    # first two lines are ne3/ne2 (always 1); then ne1 (vocab), ne0 (n_embd)
+    f.readline()
+    f.readline()
+    ne1 = int(f.readline().strip())
+    ne0 = int(f.readline().strip())
 embeds = np.fromfile("detembeds.bin", dtype=np.float32)
-# TODO get the shape from detembeds.dim to be able to also work with other LLMs
-embeds.shape = (151936, 896)  # (vocab_size, n_embd)
+embeds.shape = (ne1, ne0)  # (vocab_size, n_embd)
 Y = embeds[np.array(toks[1:])]
 X = X[:-1]  # last token has no t+1 target
 print("train set:", X.shape, "->", Y.shape)
