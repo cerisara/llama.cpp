@@ -33,7 +33,7 @@ MODELS = [
     ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
 ]
-modnom, is_moe = MODELS[1]
+modnom, is_moe = MODELS[0]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -82,7 +82,11 @@ class SharedMem(threading.Thread):
             except FileNotFoundError:
                 pass
             time.sleep(1)
-        self.mm = mmap.mmap(self.fd, 4*10000000) # 4 because in C++ the size is given in float32!
+        # ensure the shared file is at least as big as the C++ buffer, even if a
+        # stale /dev/shm/ring_buffer_demo from a previous run still exists
+        os.ftruncate(self.fd, 4*70000000)
+        self.mm = mmap.mmap(self.fd, 4*70000000) # 4 because in C++ the size is given in float32!
+                                           # must match SharedMemory.buffers in tools/server/server.cpp
         self.buf = memoryview(self.mm)
         while True:
             # wait for C++ to create the semaphores
@@ -162,9 +166,6 @@ class SharedMem(threading.Thread):
         return protoks
  
     def rollout_gen(self, prompt):
-        if '"' in prompt: 
-            print("ERROR ROLLOUT",prompt)
-            return None,None
         url = "http://localhost:"+PORT+"/completions"
         data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False, "n_predict": NTOKS2GEN}
         headers = { "Content-Type": "application/json" }
@@ -181,9 +182,6 @@ class SharedMem(threading.Thread):
         return None
  
     def rollout_train(self, prompt):
-        if '"' in prompt: 
-            print("ERROR ROLLOUT",prompt)
-            return None,None
         # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
         url = "http://localhost:"+PORT+"/embeddings"
         data = {"content" : prompt, "return_tokens": True, "cache_prompt": False}
@@ -306,8 +304,9 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None
     os.system('touch layers2save')
     for l in connectedCPPLayers: os.system('echo "'+l+'" >> layers2save')
 
-    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-ub","2048","-m",modnom,"--no-webui",
+    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
+                               "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *OPTS,
                                env={"XHOW_ACTIVS": "1"},
                                notify_event=listening_event)

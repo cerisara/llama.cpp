@@ -38,7 +38,8 @@ static const char* SHM_NAME = "/ring_buffer_demo";
 static const char* SEM_C2P = "/c2py_sem";
 static const char* SEM_P2C = "/py2c_sem";
 struct SharedMemory {
-    float buffers[1][10000000];
+    // big enough for one full-prompt hidden-state tensor: ubatch (16384) x hidden (4096)
+    float buffers[1][70000000];
 };
 SharedMemory *shm;
 sem_t* sem_c2p;
