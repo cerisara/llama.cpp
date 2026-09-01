@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <filesystem>
@@ -37,6 +38,9 @@
 #endif
 
 constexpr int HTTP_POLLING_SECONDS = 1;
+
+// internal flag: request logits for every prompt token at the last layer (detson)
+static const bool detson_logits_all = getenv("LOGITS_ALL") != nullptr;
 
 static common_speculative_output_limits server_output_limits(const common_params & params) {
     if (params.embedding ||
@@ -3515,7 +3519,7 @@ private:
                         add_ok &= batch.add(slot.id,
                             cur_tok,
                             /* pos       = */ slot.prompt.tokens.pos_next(),
-                            /* output    = */ slot.need_embd(),
+                            /* output    = */ slot.need_embd() || detson_logits_all,
                             /* is_prompt = */ true);
                         slot.prompt.tokens.push_back(cur_tok);
 
