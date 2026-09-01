@@ -68,6 +68,9 @@ def main():
             print("index " + str(index) + " out of range")
             sys.exit(1)
         arr = activs[index]
+        if arr.size == 0:
+            print("tensor " + str(index) + " shape=" + str(arr.shape) + " is empty, skipping")
+            return
         default_dim = arr.shape[0] - 1
         d = dim if dim is not None else default_dim
         if d < 0 or d >= arr.shape[0]:
@@ -82,7 +85,10 @@ def main():
 
     # summary of every chunk
     for i, arr in enumerate(activs):
-        print(str(i) + ": shape=" + str(arr.shape) + " min=" + str(arr.min()) + " max=" + str(arr.max()))
+        if arr.size == 0:
+            print(str(i) + ": shape=" + str(arr.shape) + " (empty)")
+        else:
+            print(str(i) + ": shape=" + str(arr.shape) + " min=" + str(arr.min()) + " max=" + str(arr.max()))
 
 
 if __name__ == "__main__":

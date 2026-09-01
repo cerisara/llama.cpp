@@ -1,4 +1,4 @@
 source ~/envs/transformers/bin/activate
 
-NTOKS=1 python ./xllamacpp.py ~/git/researchplm/agentic/q1_oracle.md
+SHOW_ACTIVS=1 NTOKS=1 python ./xllamacpp.py ~/git/researchplm/agentic/q1_oracle.md
 

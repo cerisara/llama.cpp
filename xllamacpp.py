@@ -106,26 +106,32 @@ class SharedMem(threading.Thread):
             self.sem_c2p.acquire()
             print("now reading layer from shared buffer",i)
             vec = self.get_buffer_view()
-            if len(vec)==0:
-                # when llamacpp quits, it warns this listener with a the sentinel magic value 424242
-                print("python got empty c++ vector: signal to quit")
+
+            if vec is None:
+                # llamacpp is quitting: it warns this listener by writing the
+                # sentinel magic value 424242
                 fincpp = True
+                print("llamacpp stopped; ending the listener loop")
                 break
-            # big activations (the ones from the LLM):
-            actbig = np.array(vec, copy=True)
-            # actbig = T x 896
-            # use dummy handler until llama.cpp is really ready, then real one
-            handler = self.get_handler()
-            y = handler.processActivations(actbig, i % self.nLayersGot)
-            if not y is None:
-                # overwrite the activations into llama.cpp
-                for j in range(len(vec)):
-                    for k in range(len(vec[j])):
-                        vec[j][k] = y[j][k]
+
+            if len(vec)==0:
+                print("python got empty c++ vector")
+            else:
+                # big activations (the ones from the LLM):
+                actbig = np.array(vec, copy=True)
+                # actbig = T x 896
+                # use dummy handler until llama.cpp is really ready, then real one
+                handler = self.get_handler()
+                y = handler.processActivations(actbig, i % self.nLayersGot)
+                if not y is None:
+                    # overwrite the activations into llama.cpp
+                    for j in range(len(vec)):
+                        for k in range(len(vec[j])):
+                            vec[j][k] = y[j][k]
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
             i += 1
-        print("removing semaphores1")
+        print("xllamacpp stopping; removing semaphores1")
         os.system('rm /dev/shm/sem.py2c_sem')
         os.system('rm /dev/shm/sem.c2py_sem')
  
@@ -134,7 +140,7 @@ class SharedMem(threading.Thread):
         mv = self.buf[start : start + 4]
         start += 4
         ne1 = np.frombuffer(mv, dtype=np.float32)
-        if ne1==424242: return []
+        if ne1==424242: return None
         ne1 = int(ne1)
         mv = self.buf[start : start + 4]
         start += 4
@@ -371,9 +377,12 @@ def saveActivations(prompts_file):
 
         def processActivations(self, actbig, i):
             self.n += 1
-            print("saving activation "+str(i)+" shape="+str(actbig.shape))
-            self.saver.save_one(actbig)
-            self.processed_once.set()
+            if actbig.shape[0]>0:
+                print("saving activation "+str(i)+" shape="+str(actbig.shape))
+                self.saver.save_one(actbig)
+                self.processed_once.set()
+            else:
+                print("WARNING: do not save activations "+str(actbig.shape))
             return None # do not modify activations
 
         def save(self):
