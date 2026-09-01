@@ -382,6 +382,8 @@ def saveActivations(prompts_file):
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
+        prompts = ['\n'.join(prompts)]
+        print("promptlen",len(prompts),len(prompts[0]))
 
     outfile = os.path.splitext(os.path.basename(prompts_file))[0] + "_activs.npz"
     handler = ActivsHandler(outfile)
