@@ -25,7 +25,7 @@ PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
-connLayers = ['l_out-16','norm']
+connLayers = ['l_out-16','l_out-34','norm']
 
 # model registry: (path, is_moe). Pick one by editing the selection line below
 MODELS = [
