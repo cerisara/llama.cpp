@@ -329,7 +329,7 @@ class ActivsSaver:
     def __init__(self, outfile):
         self.outfile = outfile
         self.n = 0
-        self.f = open(outfile, "wb")
+        self.f = open(outfile, "ab")
 
     def save_one(self, actbig):
         shape = np.asarray(actbig.shape, dtype=np.int32)
