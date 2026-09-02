@@ -25,6 +25,7 @@ print("activations tensors:", len(activs), "last shape:", activs[-1].shape)
 # each token is captured once per connected layer (l_out-16 and norm), so the
 # number of activation vectors should be double the number of prompt tokens
 nactivs = sum(a.shape[0] for a in activs)
+hdim = activs[0].shape[1]
 print("activation vectors:", nactivs, "tokens:", len(toks), "expected:", 2 * len(toks))
 assert nactivs == 2 * len(toks), "activation vectors should be double the prompt tokens"
 
@@ -34,10 +35,7 @@ assert nactivs == 2 * len(toks), "activation vectors should be double the prompt
 # Rebuild one vector per token per layer, then concatenate them into the MLP
 # input vector for that token.
 n_layers = 2
-layer_vecs = [
-    np.concatenate([a for a in activs[layer::n_layers]], axis=0)
-    for layer in range(n_layers)
-]
+layer_vecs = [np.concatenate([a for a in activs[layer::n_layers]], axis=0) for layer in range(n_layers)]
 assert all(len(v) == len(toks) for v in layer_vecs), "layer vectors must match token count"
 X = np.concatenate(layer_vecs, axis=1)  # (ntoks, 2*dim) input pairs
 
@@ -57,30 +55,75 @@ Y = embeds[np.array(toks[1:])]
 X = X[:-1]  # last token has no t+1 target
 print("train set:", X.shape, "->", Y.shape)
 
+# the MLP adds a bias onto the residual stream (last half of the input), so its
+# width must match the target embedding width; a mismatch means the activations
+# and detembeds.bin were captured from different models
+if X.shape[1] // 2 != Y.shape[1]:
+    print("WARNING: residual stream dim", X.shape[1] // 2,
+          "!= target embedding dim", Y.shape[1],
+          "; activations and detembeds.bin come from different models")
+
 # small MLP trained with MSE to predict the t+1 token embedding from a pair of
 # activation vectors (l_out-16 and norm)
+# It's not really an MLP, it's actually a residual key-value store with a ReLU between both
+# layers; the ReLU has a tunable threshold (instead of standard 0) and its role
+# is to output 0 when the similarity between the input and stored keys is too
+# small. The residual stream is not the full input, but the second-half of the
+# input, which corresponds to the last activation layer of the main LLM. Hence,
+# this MLP actually modifies (adds a bias to) the output of the main LLM only when 
+# its input matches the keys it's been trained on.
 class MLP(nn.Module):
-    def __init__(self, din, dhid, dout):
+    def __init__(self, din, dhid):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(din, dhid),
-            nn.ReLU(),
-            nn.Linear(dhid, dhid),
-            nn.ReLU(),
-            nn.Linear(dhid, dout),
-        )
+        self.keys = nn.Linear(din, dhid)
+        self.vals = nn.Linear(dhid, din // 2)
+        self.thr  = 0.1 # not a parameter; to be tuned later on
+        # running sufficient statistics over similarities seen during training
+        self.sim_n = 0
+        self.sim_min = None
+        self.sim_max = None
+        self.sim_mean = 0.0
+        self.sim_m2 = 0.0 # sum of squared deviations from the mean (Welford)
 
     def forward(self, x):
-        return self.net(x)
+        # residual stream is the last half of each vector (last LLM activation layer)
+        lasth = x[:, x.shape[1] // 2:]
+        # match the whole input against the stored keys
+        sim = self.keys(x)
+        # print("MLPSIM",torch.max(sim))
+        # decode the bias added onto the residual stream; during training drop the
+        # threshold and train a plain 2-layer linear stack, apply it only at test
+        # time (model.eval()) where similarities that are too small are zeroed out
+        if self.training:
+            smoothed_vals = self.vals(sim)
+            # update running stats on the batch similarities (Welford merge)
+            x = sim.detach().flatten()
+            bn = x.numel()
+            bmean = x.mean().item()
+            bm2 = ((x - bmean) ** 2).sum().item()
+            if self.sim_min is None:
+                self.sim_min = x.min().item()
+                self.sim_max = x.max().item()
+            else:
+                self.sim_min = min(self.sim_min, x.min().item())
+                self.sim_max = max(self.sim_max, x.max().item())
+            n = self.sim_n + bn
+            delta = bmean - self.sim_mean
+            self.sim_mean += delta * bn / n
+            self.sim_m2 += bm2 + delta * delta * self.sim_n * bn / n
+            self.sim_n = n
+        else:
+            smoothed_vals = self.vals(F.relu(sim - self.thr))
+        return lasth + smoothed_vals
 
-model = MLP(X.shape[1], 2048, Y.shape[1])
+model = MLP(X.shape[1], X.shape[1]) # choose second dim as you wish
 opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 ds = torch.utils.data.TensorDataset(torch.tensor(X, dtype=torch.float32), torch.tensor(Y, dtype=torch.float32))
 print("dataset",len(ds))
 loader = torch.utils.data.DataLoader(ds, batch_size=256, shuffle=True)
 
 model.train()
-for epoch in range(30):
+for epoch in range(3):
     total = 0.0
     for xb, yb in loader:
         opt.zero_grad()
@@ -89,4 +132,10 @@ for epoch in range(30):
         opt.step()
         total += loss.item() * len(xb)
     print("epoch", epoch, "mse", total / len(ds))
+
+# running stats gathered during training, to pick a sensible thr for the
+# test-time threshold
+print("similarity stats: count=%d min=%.4f mean=%.4f std=%.4f max=%.4f" % (
+      model.sim_n, model.sim_min, model.sim_mean,
+      (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
 
