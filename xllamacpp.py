@@ -24,7 +24,9 @@ PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
-connLayers = ['l_out-16','norm']
+
+with open("layers2save") as f:
+    nlayers = sum(1 for line in f if line.strip())
 
 # model registry: (path, is_moe). Pick one by editing the selection line below
 MODELS = [
@@ -56,8 +58,7 @@ class DummyHandler:
         return None # do not modify activations
 
 class SharedMem(threading.Thread):
-    def __init__(self, nLayersGot, activsHandler, listening_event):
-        self.nLayersGot = nLayersGot
+    def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
         threading.Thread.__init__(self)
@@ -121,7 +122,7 @@ class SharedMem(threading.Thread):
                 # actbig = T x 896
                 # use dummy handler until llama.cpp is really ready, then real one
                 handler = self.get_handler()
-                y = handler.processActivations(actbig, i % self.nLayersGot)
+                y = handler.processActivations(actbig, i % nlayers)
                 if not y is None:
                     # overwrite the activations into llama.cpp
                     for j in range(len(vec)):
@@ -288,14 +289,7 @@ class AsyncScriptRunner:
                 self.stderr_thread.join()
                 print("Script stopped.")
  
-def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None):
-    # TODO 1 check with a first dummy llama-server run that does not capture any
-    # activation but that just prints all model layers that the strings in
-    # connectedCPPLayers all belong to the printed model layers (and also try to
-    # guess what is the last output norm layer ??)
-    if nLayersGot is None:
-        nLayersGot = len(connectedCPPLayers)
-
+def initLlamacpp(llamacppdir, activsHandler):
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
     os.system('rm /dev/shm/sem.py2c_sem')
@@ -305,12 +299,8 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None
     # from the dummy handler to the real one
     listening_event = threading.Event()
 
-    sm = SharedMem(nLayersGot, activsHandler, listening_event)
+    sm = SharedMem(activsHandler, listening_event)
     sm.start()
-    os.system('rm -f layers2save')
-    os.system('touch layers2save')
-    for l in connectedCPPLayers: os.system('echo "'+l+'" >> layers2save')
-
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
@@ -397,7 +387,7 @@ def saveActivations(prompts_file):
     handler = ActivsHandler(outfile)
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
-    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
 
     print("Triggering rollouts to get activations...")
     for utt in prompts:
@@ -452,21 +442,20 @@ def injectActivation(prompts_file, arg):
     class ActivsInjector:
         # overwrites the last connected layer with the target embedding during
         # the prefill only, so the model is forced to generate the target token
-        def __init__(self, emb, nlayers):
+        def __init__(self, emb):
             self.emb = emb
-            self.nlayers = nlayers
             self.injected = False
 
         def processActivations(self, actbig, i):
-            if not self.injected and i == self.nlayers - 1:
+            if not self.injected and i == nlayers - 1:
                 print("injecting target embedding at last layer (prefill) shape=" + str(actbig.shape))
                 self.injected = True
                 print("injected vector first 5 values:", self.emb[:5])
                 return np.broadcast_to(self.emb, actbig.shape).copy()
             return None # do not modify activations
 
-    handler = ActivsInjector(emb, len(connLayers))
-    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
+    handler = ActivsInjector(emb)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
