@@ -466,15 +466,16 @@ def injectActivation(prompts_file, token_index):
     sharedRAM.join()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python xllamacpp.py <prompts_file> [token_index]")
-        print("  without arg: save activations to <prompts>_activs.npz")
-        print("  with token_index: load detembeds.bin and inject the embedding")
-        print("    of that token into the last layer at the prefill step")
-        sys.exit(1)
-    prompts_file = sys.argv[1]
-    if len(sys.argv) >= 3:
-        injectActivation(prompts_file, int(sys.argv[2]))
+    import argparse
+    parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
+    parser.add_argument("prompts_file", help="file with prompts (one per line)")
+    parser.add_argument("--inject_token", type=int, default=None,
+                        help="load detembeds.bin and inject the embedding of this "
+                             "token into the last layer at the prefill step")
+    args = parser.parse_args()
+    if args.inject_token is None:
+        # without arg: save activations to <prompts>_activs.npz
+        saveActivations(args.prompts_file)
     else:
-        saveActivations(prompts_file)
+        injectActivation(args.prompts_file, args.inject_token)
 
