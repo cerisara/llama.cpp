@@ -409,35 +409,23 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
-def injectActivation(prompts_file, arg):
-    # arg is either a token index (int) read from detembeds.bin, or the name
-    # of a binary file containing the raw float32 vector to inject
-    try:
-        token_index = int(arg)
-        is_index = True
-    except ValueError:
-        is_index = False
-
-    if is_index:
-        # read only the embedding of a single token from the unembedding matrix
-        # that this program saved earlier (run it with SAVE_EMB to produce
-        # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
-        with open("detembeds.dims") as f:
-            ne3 = int(f.readline().strip())
-            ne2 = int(f.readline().strip())
-            ne1 = int(f.readline().strip())
-            ne0 = int(f.readline().strip())
-        if token_index >= ne1:
-            print("ERROR token index " + str(token_index) + " out of range (vocab=" + str(ne1) + ")")
-            return
-        with open("detembeds.bin", "rb") as f:
-            # output.weight is [ne1 rows, ne0 cols], so row token_index starts here
-            f.seek(token_index * ne0 * 4)
-            emb = np.frombuffer(f.read(ne0 * 4), dtype=np.float32).copy()
-        print("loaded embedding for token " + str(token_index) + " dim=" + str(len(emb)))
-    else:
-        emb = np.fromfile(arg, dtype=np.float32)
-        print("loaded embedding from file " + arg + " dim=" + str(len(emb)))
+def injectActivation(prompts_file, token_index):
+    # read only the embedding of a single token from the unembedding matrix
+    # that this program saved earlier (run it with SAVE_EMB to produce
+    # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
+    with open("detembeds.dims") as f:
+        ne3 = int(f.readline().strip())
+        ne2 = int(f.readline().strip())
+        ne1 = int(f.readline().strip())
+        ne0 = int(f.readline().strip())
+    if token_index >= ne1:
+        print("ERROR token index " + str(token_index) + " out of range (vocab=" + str(ne1) + ")")
+        return
+    with open("detembeds.bin", "rb") as f:
+        # output.weight is [ne1 rows, ne0 cols], so row token_index starts here
+        f.seek(token_index * ne0 * 4)
+        emb = np.frombuffer(f.read(ne0 * 4), dtype=np.float32).copy()
+    print("loaded embedding for token " + str(token_index) + " dim=" + str(len(emb)))
 
     class ActivsInjector:
         # overwrites the last connected layer with the target embedding during
@@ -479,16 +467,14 @@ def injectActivation(prompts_file, arg):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python xllamacpp.py <prompts_file> [token_index|vector_file]")
+        print("Usage: python xllamacpp.py <prompts_file> [token_index]")
         print("  without arg: save activations to <prompts>_activs.npz")
         print("  with token_index: load detembeds.bin and inject the embedding")
         print("    of that token into the last layer at the prefill step")
-        print("  with vector_file: read the raw float32 vector from that binary file")
-        print("    and inject it directly into the last layer at the prefill step")
         sys.exit(1)
     prompts_file = sys.argv[1]
     if len(sys.argv) >= 3:
-        injectActivation(prompts_file, sys.argv[2])
+        injectActivation(prompts_file, int(sys.argv[2]))
     else:
         saveActivations(prompts_file)
 
