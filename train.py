@@ -8,6 +8,18 @@ import torch.nn.functional as F
 
 from read_activs import load_activs
 
+device = torch.device("cpu")
+if torch.cuda.is_available():
+    # verify the GPU actually works with a dummy tensor op before using it
+    try:
+        x = torch.zeros(1, device="cuda")
+        y = (x + 1).cpu()
+        assert y.item() == 1
+        device = torch.device("cuda")
+    except Exception as e:
+        print("GPU check failed, falling back to CPU:", e)
+print("using device:", device)
+
 toks = None
 with open("q1.log", "r") as f:
     for l in f:
@@ -77,7 +89,8 @@ class MLP(nn.Module):
         super().__init__()
         self.keys = nn.Linear(din, dhid)
         self.vals = nn.Linear(dhid, din // 2)
-        self.thr  = 0.1 # not a parameter; to be tuned later on
+        self.thr  = 0.8 # not a parameter; to be tuned later on
+        self.lam_sim = 0.1 # weight of the similarity-augmenting term
         self.initstats()
 
     def initstats(self):
@@ -91,8 +104,11 @@ class MLP(nn.Module):
     def forward(self, x):
         # residual stream is the last half of each vector (last LLM activation layer)
         lasth = x[:, x.shape[1] // 2:]
-        # match the whole input against the stored keys
-        sim = self.keys(x)
+        # normalized (cosine) similarity between the input and every stored key;
+        # the key vectors are the row-normalized weights of the keys layer
+        w = F.normalize(self.keys.weight, dim=1)  # (dhid, din) key directions
+        xn = F.normalize(x, dim=1)                # (batch, din)
+        sim = xn @ w.t()                          # (batch, dhid) cosines in [-1, 1]
         # print("MLPSIM",torch.max(sim))
         # decode the bias added onto the residual stream; during training drop the
         # threshold and train a plain 2-layer linear stack, apply it only at test
@@ -116,22 +132,35 @@ class MLP(nn.Module):
             self.sim_m2 += bm2 + delta * delta * self.sim_n * bn / n
             self.sim_n = n
         else:
+            # cosine is already in [-1, 1], so thr gates on direction match
             smoothed_vals = self.vals(F.relu(sim - self.thr))
-        return lasth + smoothed_vals
+        # return both the reconstruction and the cosine similarities, so the
+        # caller can reuse sim (for the aux loss) instead of recomputing it
+        return lasth + smoothed_vals, sim
 
 model = MLP(X.shape[1], X.shape[1]) # choose second dim as you wish
-opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-ds = torch.utils.data.TensorDataset(torch.tensor(X, dtype=torch.float32), torch.tensor(Y, dtype=torch.float32))
+opt = torch.optim.Adam(model.parameters(), lr=1e-5)
+ds = torch.utils.data.TensorDataset(torch.tensor(X, dtype=torch.float32, device=device),
+                                    torch.tensor(Y, dtype=torch.float32, device=device))
 print("dataset",len(ds))
 loader = torch.utils.data.DataLoader(ds, batch_size=256, shuffle=True)
 
+model = model.to(device)
 model.train()
-for epoch in range(3):
+for epoch in range(30):
     total = 0.0
     for xb, yb in loader:
         opt.zero_grad()
-        loss = F.mse_loss(model(xb), yb)
-        loss.backward()
+        out, sim = model(xb)
+        loss = F.mse_loss(out, yb)
+        # auxiliary term: reuse the cosine similarities already computed in the
+        # forward pass; take the best-matching key (max over hidden units) and
+        # push that best cosine up towards 1
+        best = sim.max(dim=1).values               # (batch,) best cosine per input
+        sim_loss = F.relu(1. - best).mean()
+        combined = loss + model.lam_sim * sim_loss
+        combined.backward()
+        combined.backward()
         opt.step()
         total += loss.item() * len(xb)
     print("epoch", epoch, "mse", total / len(ds))
@@ -143,3 +172,8 @@ for epoch in range(3):
           (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
     model.initstats()
 
+# save the learned parameters (keys, vals) and the threshold to disk
+state = model.state_dict()
+state["thr"] = model.thr
+torch.save(state, "mlp.pt")
+print("saved parameters to mlp.pt")
