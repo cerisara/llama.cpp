@@ -48,6 +48,8 @@ sem_t* sem_py2c;
 char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
 char *detsaveemb = NULL; // when set (from SAVE_EMB), save embeddings then stop
 int detembsaved = 0; // once saved, do not save it again
+char * firstnodeseen = NULL; // first node name seen by the eval callback
+int done_first_node = 0; // stop printing node names once the sequence is known
 struct callback_data {
     std::vector<uint8_t> data;
 };
@@ -215,9 +217,15 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
         ggml_backend_tensor_get(t, cb_data->data.data(), 0, n_bytes);
     }
 
-	{
-		const char *detshowactivs = getenv("SHOW_ACTIVS");
-		if (detshowactivs!=NULL) fprintf(stderr,"detdebug2 %s\n",t->name);
+	if (!done_first_node) {
+		if (firstnodeseen == NULL) {
+			fprintf(stderr,"node: %s\n",t->name);
+			firstnodeseen = (char *) t->name;
+		} else if (strcmp(firstnodeseen, t->name) == 0) {
+			done_first_node = 1;
+		} else {
+			fprintf(stderr,"node: %s\n",t->name);
+		}
 	}
     for (int i=0;i<1000;i++) {
         if (detsavelayer[i]==NULL) break;

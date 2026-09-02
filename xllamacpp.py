@@ -6,7 +6,6 @@
 
 # Environment variables to control the program:
 # SAVE_EMB=result_output to save the embeddings
-# SHOW_ACTIVS=1 to show the full stack of layers names from the model
 
 import os
 import sys
@@ -29,12 +28,11 @@ connLayers = ['l_out-16','norm']
 
 # model registry: (path, is_moe). Pick one by editing the selection line below
 MODELS = [
-    ("/home/xtof/Qwen3-8B-Q5_K_M.gguf", False),
     ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
     ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
 ]
-modnom, is_moe = MODELS[3]
+modnom, is_moe = MODELS[2]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -317,7 +315,6 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *OPTS,
-                               env={"XHOW_ACTIVS": "1"},
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
     # "llama_server: listening on http://..." when it is really ready. While
