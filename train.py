@@ -90,7 +90,7 @@ class MLP(nn.Module):
         self.keys = nn.Linear(din, dhid)
         self.vals = nn.Linear(dhid, din // 2)
         self.thr  = 0.8 # not a parameter; to be tuned later on
-        self.lam_sim = 0.1 # weight of the similarity-augmenting term
+        self.lam_sim = 1.0 # weight of the similarity-augmenting term
         self.initstats()
 
     def initstats(self):
@@ -159,7 +159,6 @@ for epoch in range(30):
         best = sim.max(dim=1).values               # (batch,) best cosine per input
         sim_loss = F.relu(1. - best).mean()
         combined = loss + model.lam_sim * sim_loss
-        combined.backward()
         combined.backward()
         opt.step()
         total += loss.item() * len(xb)
