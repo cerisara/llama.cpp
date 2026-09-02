@@ -78,6 +78,9 @@ class MLP(nn.Module):
         self.keys = nn.Linear(din, dhid)
         self.vals = nn.Linear(dhid, din // 2)
         self.thr  = 0.1 # not a parameter; to be tuned later on
+        self.initstats()
+
+    def initstats(self):
         # running sufficient statistics over similarities seen during training
         self.sim_n = 0
         self.sim_min = None
@@ -133,9 +136,10 @@ for epoch in range(3):
         total += loss.item() * len(xb)
     print("epoch", epoch, "mse", total / len(ds))
 
-# running stats gathered during training, to pick a sensible thr for the
-# test-time threshold
-print("similarity stats: count=%d min=%.4f mean=%.4f std=%.4f max=%.4f" % (
-      model.sim_n, model.sim_min, model.sim_mean,
-      (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
+    # running stats gathered during training, to pick a sensible thr for the
+    # test-time threshold
+    print("similarity stats: count=%d min=%.4f mean=%.4f std=%.4f max=%.4f" % (
+          model.sim_n, model.sim_min, model.sim_mean,
+          (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
+    model.initstats()
 
