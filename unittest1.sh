@@ -19,7 +19,7 @@ a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
  
 goldtok=$(cat repgld | grep PROMPT_TOKENS | cut -c16- | cut -d',' -f$a)
 echo "gold token $goldtok"
-python ./xllamacpp.py tt $goldtok > repfix
+python ./xllamacpp.py tt --inject_token $goldtok > repfix
 rm tt_activs.npz
 cat repfix | grep GEN
 
