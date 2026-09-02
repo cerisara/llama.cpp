@@ -409,6 +409,75 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
+class LadderHandler:
+    # runs each pair of connected-layer activations (l_out-16 then norm) through
+    # the MLP trained by train.py, and reinjects the transformed norm activation
+    # back into llama.cpp. Reimplements the test-time forward of the MLP in numpy
+    # (keys are row-normalized, cosines gated by the stored threshold) so we only
+    # need the saved state dict in mlp.pt, not the nn.Module class.
+    def __init__(self, mlpfile):
+        import torch
+        state = torch.load(mlpfile, map_location="cpu")
+        self.thr = float(state.pop("thr"))
+        keys = state["keys.weight"].numpy().astype(np.float32)        # (dhid, din)
+        self.vals_w = state["vals.weight"].numpy().astype(np.float32) # (hdim, dhid)
+        # vals is a nn.Linear, so its forward also adds the bias
+        self.vals_b = state["vals.bias"].numpy().astype(np.float32) if "vals.bias" in state else None
+        # note: keys.bias, when present, is ignored because MLP.forward only
+        # reads self.keys.weight (it never calls keys(x) as a layer)
+        # row-normalize the stored key directions (see MLP.forward)
+        self.keys_w = keys / np.linalg.norm(keys, axis=1, keepdims=True)
+        self.prev = None  # previous (l_out-16) activation, paired with the next one
+        self.n = 0
+
+    def processActivations(self, actbig, i):
+        actbig = np.asarray(actbig, dtype=np.float32)
+        if self.prev is None:
+            # first half of the input pair (l_out-16): just buffer it unchanged
+            self.prev = actbig.copy()
+            return None
+        # pair is [prev (l_out-16), current (norm)]; the MLP input is the 2*dim concat
+        X = np.concatenate([self.prev, actbig], axis=1)
+        self.prev = None
+        # normalized cosine similarity between the input and every stored key
+        xn = X / np.linalg.norm(X, axis=1, keepdims=True)
+        sim = xn @ self.keys_w.T                       # (T, dhid)
+        gate = np.maximum(sim - self.thr, 0.0)         # test-time thresholded ReLU
+        bias = gate @ self.vals_w.T                    # (T, hdim)
+        if self.vals_b is not None:
+            bias = bias + self.vals_b
+        # reinject: residual stream is the norm half of the input (== current actbig)
+        out = actbig + bias
+        self.n += 1
+        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape))
+        return out.astype(np.float32)
+
+
+def runLadder(prompts_file, mlpfile):
+    handler = LadderHandler(mlpfile)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
+
+    with open(prompts_file) as f:
+        prompts = [line.rstrip('\n') for line in f if line.strip()]
+
+    print("Triggering rollouts with ladder MLP...")
+    for utt in prompts:
+        print("Prompt:", utt)
+        s = sharedRAM.rollout_gen(utt)
+        if not s == None:
+            print("GEN", s[0])
+            print("TOKGEN", s[1])
+        time.sleep(1)
+
+    print("Waiting for activations to be processed...")
+    time.sleep(2)
+
+    print("Stopping llama.cpp process...")
+    procCPP.stop()
+    print("Waiting for SharedMem thread to finish...")
+    sharedRAM.join()
+
+
 def injectActivation(prompts_file, token_index):
     # read only the embedding of a single token from the unembedding matrix
     # that this program saved earlier (run it with SAVE_EMB to produce
@@ -472,8 +541,14 @@ if __name__ == "__main__":
     parser.add_argument("--inject_token", type=int, default=None,
                         help="load detembeds.bin and inject the embedding of this "
                              "token into the last layer at the prefill step")
+    parser.add_argument("--ladder", type=str, default=None,
+                        help="file with the MLP trained by train.py (e.g. mlp.pt); "
+                             "transform each non-dummy activation through it and "
+                             "reinject the output into llama.cpp")
     args = parser.parse_args()
-    if args.inject_token is None:
+    if args.ladder is not None:
+        runLadder(args.prompts_file, args.ladder)
+    elif args.inject_token is None:
         # without arg: save activations to <prompts>_activs.npz
         saveActivations(args.prompts_file)
     else:
