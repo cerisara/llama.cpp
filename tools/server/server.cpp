@@ -269,11 +269,13 @@ static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_d
     const struct ggml_tensor * src0 = t->src[0];
     const struct ggml_tensor * src1 = t->src[1];
 
+	/*
 	fprintf(stderr,"DETSAVENODE %lld %lld %lld %lld\n",
             src0!=NULL ? (long long) src0->ne[0] : -1,
             src0!=NULL ? (long long) src0->ne[1] : -1,
             src1!=NULL ? (long long) src1->ne[0] : -1,
             src1!=NULL ? (long long) src1->ne[1] : -1);
+			*/
     // detect the unembedding matrix by its dims, no node name needed: only the
     // vocab dim exceeds 100000, and the latent dim matches the activations src1
     if (detsaveemb!=NULL && t->op == GGML_OP_MUL_MAT && src0!=NULL && src1!=NULL &&

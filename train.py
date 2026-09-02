@@ -87,10 +87,10 @@ if X.shape[1] // 2 != Y.shape[1]:
 class MLP(nn.Module):
     def __init__(self, din, dhid):
         super().__init__()
-        self.keys = nn.Linear(din, dhid)
-        self.vals = nn.Linear(dhid, din // 2)
+        self.keys = nn.Linear(din, dhid, bias=False)
+        self.vals = nn.Linear(dhid, din // 2, bias=False)
+        nn.init.zeros_(self.vals.weight)  # start with zero output so MLP is neutral
         self.thr  = 0.8 # not a parameter; to be tuned later on
-        self.lam_sim = 1.0 # weight of the similarity-augmenting term
         self.initstats()
 
     def initstats(self):
@@ -115,8 +115,9 @@ class MLP(nn.Module):
         # time (model.eval()) where similarities that are too small are zeroed out
         if self.training:
             smoothed_vals = self.vals(sim)
-            # update running stats on the batch similarities (Welford merge)
-            x = sim.detach().flatten()
+            # update running stats on the best-matching cosine per input (Welford merge)
+            best = sim.max(dim=1).values          # (batch,) best cosine
+            x = best.detach()
             bn = x.numel()
             bmean = x.mean().item()
             bm2 = ((x - bmean) ** 2).sum().item()
@@ -149,6 +150,7 @@ model = model.to(device)
 model.train()
 for epoch in range(30):
     total = 0.0
+    total2 = 0.0
     for xb, yb in loader:
         opt.zero_grad()
         out, sim = model(xb)
@@ -158,11 +160,12 @@ for epoch in range(30):
         # push that best cosine up towards 1
         best = sim.max(dim=1).values               # (batch,) best cosine per input
         sim_loss = F.relu(1. - best).mean()
-        combined = loss + model.lam_sim * sim_loss
+        combined = loss + 10000. * sim_loss
         combined.backward()
         opt.step()
         total += loss.item() * len(xb)
-    print("epoch", epoch, "mse", total / len(ds))
+        total2 += sim_loss.item() * len(xb)
+    print("epoch", epoch, "mse", total / len(ds), "keysimloss", total2 / len(ds))
 
     # running stats gathered during training, to pick a sensible thr for the
     # test-time threshold

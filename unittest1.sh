@@ -3,7 +3,7 @@ source ~/envs/transformers/bin/activate
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
-NTOKS=0 SAVE_EMB=1 python ./xllamacpp.py tt > saveemb
+NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py tt > saveemb
 rm tt_activs.npz
 
 NTOKS=1 python ./xllamacpp.py tt > repgld

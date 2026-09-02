@@ -32,8 +32,9 @@ MODELS = [
     ("/home/xtof/Qwen3-8B-Q5_K_M.gguf", False),
     ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
+    ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
 ]
-modnom, is_moe = MODELS[0]
+modnom, is_moe = MODELS[3]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -140,11 +141,12 @@ class SharedMem(threading.Thread):
         mv = self.buf[start : start + 4]
         start += 4
         ne1 = np.frombuffer(mv, dtype=np.float32)
+        ne1 = ne1.item()
         if ne1==424242: return None
         ne1 = int(ne1)
         mv = self.buf[start : start + 4]
         start += 4
-        ne0 = int(np.frombuffer(mv, dtype=np.float32))
+        ne0 = int(np.frombuffer(mv, dtype=np.float32).item())
         mv = self.buf[start : start + 4*ne0*ne1]
         vec = np.frombuffer(mv, dtype=np.float32)
         vec.shape = (ne1,ne0)
