@@ -120,55 +120,44 @@ class SharedMem(threading.Thread):
             else:
                 # big activations (the ones from the LLM):
                 actbig = np.array(vec, copy=True)
-                # a single layer can be split into consecutive subtensors;
-                # concat them along axis 0 when the name matches the previous
+                # a layer can arrive as several consecutive subtensors with the
+                # same name: buffer them and concat along axis 0; the tensor is
+                # only complete (i.e. passed to the handler) once a different
+                # name appears, or when llama.cpp quits
                 if self.prev_name is not None and name_str == self.prev_name:
-                    actbig = np.concatenate([self.prev, actbig], axis=0)
-                    self.prev = None
-                    self.prev_name = None
-                elif self.prev is not None:
-                    # name changed: process the buffered tensor first
-                    handler = self.get_handler()
-                    y = handler.processActivations(self.prev, i % nlayers, self.prev_name)
-                    if not y is None:
-                        for j in range(len(self.prev)):
-                            for k in range(len(self.prev[j])):
-                                self.prev[j][k] = y[j][k]
-                    i += 1
-                    self.prev = None
-                    self.prev_name = None
-                    # now process the current tensor as a new layer
-                    handler = self.get_handler()
-                    y = handler.processActivations(actbig, i % nlayers, name_str)
-                    if not y is None:
-                        for j in range(len(vec)):
-                            for k in range(len(vec[j])):
-                                vec[j][k] = y[j][k]
+                    self.prev = np.concatenate([self.prev, actbig], axis=0)
                 else:
-                    # first tensor for this layer: buffer it for potential concat
+                    if self.prev is not None:
+                        self.process_pending(i)
+                        i += 1
                     self.prev = actbig
                     self.prev_name = name_str
-                    handler = self.get_handler()
-                    y = handler.processActivations(actbig, i % nlayers, name_str)
-                    if not y is None:
-                        for j in range(len(vec)):
-                            for k in range(len(vec[j])):
-                                vec[j][k] = y[j][k]
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
-        # process any remaining buffered tensor (last layer's tail)
+        # the last layer is only complete when llama.cpp quits
         if self.prev is not None:
-            handler = self.get_handler()
-            y = handler.processActivations(self.prev, i % nlayers, self.prev_name)
-            if not y is None:
-                for j in range(len(self.prev)):
-                    for k in range(len(self.prev[j])):
-                        self.prev[j][k] = y[j][k]
+            self.process_pending(i)
             i += 1
         print("xllamacpp stopping; removing semaphores1")
         os.system('rm /dev/shm/sem.py2c_sem')
         os.system('rm /dev/shm/sem.c2py_sem')
  
+    def process_pending(self, i):
+        # pass the complete tensor of one layer (possibly assembled from
+        # several subtensors) to the handler
+        if self.prev is None:
+            return
+        t, name = self.prev, self.prev_name
+        self.prev = None
+        self.prev_name = None
+        handler = self.get_handler()
+        y = handler.processActivations(t, i % nlayers, name)
+        if not y is None:
+            # by the time the full tensor is assembled the shared buffer
+            # already holds the next tensor, so y cannot be written back yet
+            print("WARNING: handler modified layer "+str(i % nlayers)+" node="+name
+                  +" but write-back is not implemented yet, changes ignored")
+
     def get_buffer_view(self):
         # Check C++ sentinel at position 0 (written during cleanup)
         if np.frombuffer(bytes(self.buf[0:4]), dtype=np.float32).item() == 424242:
