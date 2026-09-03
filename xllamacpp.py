@@ -623,26 +623,27 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
                 return
             req = self._req()
+            print("DEBUG full prompt",str(req))
             with serial:
-                if self.path == "/v1/chat/completions":
-                    messages = req.get("messages", [])
-                    # last user message is the prompt (multi-turn context ignored)
-                    prompt = ""
-                    for m in messages:
-                        c = m.get("content") if isinstance(m, dict) else None
-                        if m.get("role") == "user" and isinstance(c, str):
-                            prompt = c
-                else:
-                    prompt = req.get("prompt", "")
-                    if isinstance(prompt, list):
-                        prompt = "".join(str(p) for p in prompt)
-                mt = req.get("max_tokens")
+                # llama.cpp will apply the chat template, so just pass through:
+                prompt = str(req)
+
+                # if self.path == "/v1/chat/completions":
+                #     messages = req.get("messages", [])
+                #     # last user message is the prompt (multi-turn context ignored)
+                #     prompt = ""
+                #     for m in messages:
+                #         c = m.get("content") if isinstance(m, dict) else None
+                #         if m.get("role") == "user" and isinstance(c, str): prompt = c
+                # else:
+                #     prompt = req.get("prompt", "")
+                #     if isinstance(prompt, list):
+                #         prompt = "".join(str(p) for p in prompt)
+                mt = req.get("max_completion_tokens", req.get("max_tokens"))
                 max_tokens = int(mt) if mt is not None else NTOKS2GEN
                 stop = req.get("stop")
-                if stop is not None and not isinstance(stop, list):
-                    stop = [stop]
-                if stop == []:
-                    stop = None
+                if stop is not None and not isinstance(stop, list): stop = [stop]
+                if stop == []: stop = None
                 res = sharedRAM.rollout_gen(prompt, n_predict=max_tokens, stop=stop,
                                             temperature=req.get("temperature"))
                 if res is None:
