@@ -135,17 +135,19 @@ class SharedMem(threading.Thread):
         os.system('rm /dev/shm/sem.c2py_sem')
  
     def get_buffer_view(self):
+        # Check C++ sentinel at position 0 (written during cleanup)
+        if np.frombuffer(bytes(self.buf[0:4]), dtype=np.float32).item() == 424242:
+            return None, None
         start = 0
-        mv = self.buf[start : start + 4]
-        start += 4
-        ne1 = np.frombuffer(mv, dtype=np.float32)
-        ne1 = ne1.item()
-        if ne1==424242: return None, None
-        ne1 = int(ne1)
-        # read the 100-char node name (stored as 100 float32 bytes)
-        name_bytes = np.frombuffer(bytes(self.buf[start : start + 100*4]), dtype=np.uint8)
+        # C++ stores: name (100 floats) -> ne1 -> ne0 -> tensor data
+        # read the 100-char node name (stored as 100 float32 values in C++)
+        name_floats = np.frombuffer(bytes(self.buf[start : start + 100*4]), dtype=np.float32)
+        name_bytes = name_floats.astype(np.uint8)
         name_str = name_bytes.tobytes().split(b'\x00')[0].decode('ascii', errors='replace')
         start += 100*4
+        mv = self.buf[start : start + 4]
+        start += 4
+        ne1 = int(np.frombuffer(mv, dtype=np.float32).item())
         mv = self.buf[start : start + 4]
         start += 4
         ne0 = int(np.frombuffer(mv, dtype=np.float32).item())
