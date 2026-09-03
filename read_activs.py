@@ -14,6 +14,7 @@ import numpy as np
 def load_activs(infile):
     # reads back the chunks in order (same format as ActivsSaver writes)
     activs = []
+    names = []
     with open(infile, "rb") as f:
         while True:
             head = f.read(4)
@@ -21,11 +22,14 @@ def load_activs(infile):
                 break
             ndim = np.frombuffer(head, dtype=np.int32).item()
             shape = np.frombuffer(f.read(4 * ndim), dtype=np.int32).tolist()
+            namelen = np.frombuffer(f.read(4), dtype=np.int32).item()
+            name = f.read(namelen).decode('ascii', errors='replace')
+            names.append(name)
             nbytes = np.frombuffer(f.read(8), dtype=np.int64).item()
             data = np.frombuffer(gzip.decompress(f.read(nbytes)), dtype=np.float32)
             data.shape = shape
             activs.append(data)
-    return activs
+    return activs, names
 
 
 def main():
@@ -56,7 +60,7 @@ def main():
             args = args[1:]
 
     print("reading " + infile)
-    activs = load_activs(infile)
+    activs, names = load_activs(infile)
     print("loaded " + str(len(activs)) + " activation tensors")
 
     if outfile is not None:
@@ -85,10 +89,11 @@ def main():
 
     # summary of every chunk
     for i, arr in enumerate(activs):
+        node = names[i] if i < len(names) else ""
         if arr.size == 0:
-            print(str(i) + ": shape=" + str(arr.shape) + " (empty)")
+            print(str(i) + ": " + node + " shape=" + str(arr.shape) + " (empty)")
         else:
-            print(str(i) + ": shape=" + str(arr.shape) + " min=" + str(arr.min()) + " max=" + str(arr.max()))
+            print(str(i) + ": " + node + " shape=" + str(arr.shape) + " min=" + str(arr.min()) + " max=" + str(arr.max()))
 
 
 if __name__ == "__main__":
