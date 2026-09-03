@@ -6,7 +6,6 @@
 
 # Environment variables to control the program:
 # SAVE_EMB=result_output to save the embeddings
-# SHOW_ACTIVS=1 to show the full stack of layers names from the model
 
 import os
 import sys
@@ -25,16 +24,17 @@ PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
-connLayers = ['l_out-16','norm']
+
+with open("layers2save") as f:
+    nlayers = sum(1 for line in f if line.strip())
 
 # model registry: (path, is_moe). Pick one by editing the selection line below
 MODELS = [
-    ("/home/xtof/Qwen3-8B-Q5_K_M.gguf", False),
     ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
     ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
 ]
-modnom, is_moe = MODELS[3]
+modnom, is_moe = MODELS[2]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -58,8 +58,7 @@ class DummyHandler:
         return None # do not modify activations
 
 class SharedMem(threading.Thread):
-    def __init__(self, nLayersGot, activsHandler, listening_event):
-        self.nLayersGot = nLayersGot
+    def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
         threading.Thread.__init__(self)
@@ -123,7 +122,7 @@ class SharedMem(threading.Thread):
                 # actbig = T x 896
                 # use dummy handler until llama.cpp is really ready, then real one
                 handler = self.get_handler()
-                y = handler.processActivations(actbig, i % self.nLayersGot)
+                y = handler.processActivations(actbig, i % nlayers)
                 if not y is None:
                     # overwrite the activations into llama.cpp
                     for j in range(len(vec)):
@@ -290,14 +289,7 @@ class AsyncScriptRunner:
                 self.stderr_thread.join()
                 print("Script stopped.")
  
-def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None):
-    # TODO 1 check with a first dummy llama-server run that does not capture any
-    # activation but that just prints all model layers that the strings in
-    # connectedCPPLayers all belong to the printed model layers (and also try to
-    # guess what is the last output norm layer ??)
-    if nLayersGot is None:
-        nLayersGot = len(connectedCPPLayers)
-
+def initLlamacpp(llamacppdir, activsHandler):
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
     os.system('rm /dev/shm/sem.py2c_sem')
@@ -307,17 +299,12 @@ def initLlamacpp(llamacppdir, connectedCPPLayers, activsHandler, nLayersGot=None
     # from the dummy handler to the real one
     listening_event = threading.Event()
 
-    sm = SharedMem(nLayersGot, activsHandler, listening_event)
+    sm = SharedMem(activsHandler, listening_event)
     sm.start()
-    os.system('rm -f layers2save')
-    os.system('touch layers2save')
-    for l in connectedCPPLayers: os.system('echo "'+l+'" >> layers2save')
-
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *OPTS,
-                               env={"XHOW_ACTIVS": "1"},
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
     # "llama_server: listening on http://..." when it is really ready. While
@@ -400,7 +387,7 @@ def saveActivations(prompts_file):
     handler = ActivsHandler(outfile)
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
-    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
 
     print("Triggering rollouts to get activations...")
     for utt in prompts:
@@ -422,54 +409,110 @@ def saveActivations(prompts_file):
     sharedRAM.join()
     handler.save()
 
-def injectActivation(prompts_file, arg):
-    # arg is either a token index (int) read from detembeds.bin, or the name
-    # of a binary file containing the raw float32 vector to inject
-    try:
-        token_index = int(arg)
-        is_index = True
-    except ValueError:
-        is_index = False
+class LadderHandler:
+    # runs each pair of connected-layer activations (l_out-16 then norm) through
+    # the MLP trained by train.py, and reinjects the transformed norm activation
+    # back into llama.cpp. Reimplements the test-time forward of the MLP in numpy
+    # (keys are row-normalized, cosines gated by the stored threshold) so we only
+    # need the saved state dict in mlp.pt, not the nn.Module class.
+    def __init__(self, mlpfile):
+        import torch
+        state = torch.load(mlpfile, map_location="cpu")
+        self.thr = float(state.pop("thr"))
+        keys = state["keys.weight"].numpy().astype(np.float32)        # (dhid, din)
+        self.vals_w = state["vals.weight"].numpy().astype(np.float32) # (hdim, dhid)
+        # vals is a nn.Linear, so its forward also adds the bias
+        self.vals_b = state["vals.bias"].numpy().astype(np.float32) if "vals.bias" in state else None
+        # note: keys.bias, when present, is ignored because MLP.forward only
+        # reads self.keys.weight (it never calls keys(x) as a layer)
+        # row-normalize the stored key directions (see MLP.forward)
+        self.keys_w = keys / np.linalg.norm(keys, axis=1, keepdims=True)
+        self.prev = None  # previous (l_out-16) activation, paired with the next one
+        self.n = 0
 
-    if is_index:
-        # read only the embedding of a single token from the unembedding matrix
-        # that this program saved earlier (run it with SAVE_EMB to produce
-        # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
-        with open("detembeds.dims") as f:
-            ne3 = int(f.readline().strip())
-            ne2 = int(f.readline().strip())
-            ne1 = int(f.readline().strip())
-            ne0 = int(f.readline().strip())
-        if token_index >= ne1:
-            print("ERROR token index " + str(token_index) + " out of range (vocab=" + str(ne1) + ")")
-            return
-        with open("detembeds.bin", "rb") as f:
-            # output.weight is [ne1 rows, ne0 cols], so row token_index starts here
-            f.seek(token_index * ne0 * 4)
-            emb = np.frombuffer(f.read(ne0 * 4), dtype=np.float32).copy()
-        print("loaded embedding for token " + str(token_index) + " dim=" + str(len(emb)))
-    else:
-        emb = np.fromfile(arg, dtype=np.float32)
-        print("loaded embedding from file " + arg + " dim=" + str(len(emb)))
+    def processActivations(self, actbig, i):
+        actbig = np.asarray(actbig, dtype=np.float32)
+        if self.prev is None:
+            # first half of the input pair (l_out-16): just buffer it unchanged
+            self.prev = actbig.copy()
+            return None
+        # pair is [prev (l_out-16), current (norm)]; the MLP input is the 2*dim concat
+        X = np.concatenate([self.prev, actbig], axis=1)
+        self.prev = None
+        # normalized cosine similarity between the input and every stored key
+        xn = X / np.linalg.norm(X, axis=1, keepdims=True)
+        sim = xn @ self.keys_w.T                       # (T, dhid)
+        gate = np.maximum(sim - self.thr, 0.0)         # test-time thresholded ReLU
+        bias = gate @ self.vals_w.T                    # (T, hdim)
+        if self.vals_b is not None:
+            bias = bias + self.vals_b
+        # reinject: residual stream is the norm half of the input (== current actbig)
+        out = actbig + bias
+        self.n += 1
+        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape))
+        return out.astype(np.float32)
+
+
+def runLadder(prompts_file, mlpfile):
+    handler = LadderHandler(mlpfile)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
+
+    with open(prompts_file) as f:
+        prompts = [line.rstrip('\n') for line in f if line.strip()]
+
+    print("Triggering rollouts with ladder MLP...")
+    for utt in prompts:
+        print("Prompt:", utt)
+        s = sharedRAM.rollout_gen(utt)
+        if not s == None:
+            print("GEN", s[0])
+            print("TOKGEN", s[1])
+        time.sleep(1)
+
+    print("Waiting for activations to be processed...")
+    time.sleep(2)
+
+    print("Stopping llama.cpp process...")
+    procCPP.stop()
+    print("Waiting for SharedMem thread to finish...")
+    sharedRAM.join()
+
+
+def injectActivation(prompts_file, token_index):
+    # read only the embedding of a single token from the unembedding matrix
+    # that this program saved earlier (run it with SAVE_EMB to produce
+    # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
+    with open("detembeds.dims") as f:
+        ne3 = int(f.readline().strip())
+        ne2 = int(f.readline().strip())
+        ne1 = int(f.readline().strip())
+        ne0 = int(f.readline().strip())
+    if token_index >= ne1:
+        print("ERROR token index " + str(token_index) + " out of range (vocab=" + str(ne1) + ")")
+        return
+    with open("detembeds.bin", "rb") as f:
+        # output.weight is [ne1 rows, ne0 cols], so row token_index starts here
+        f.seek(token_index * ne0 * 4)
+        emb = np.frombuffer(f.read(ne0 * 4), dtype=np.float32).copy()
+    print("loaded embedding for token " + str(token_index) + " dim=" + str(len(emb)))
 
     class ActivsInjector:
         # overwrites the last connected layer with the target embedding during
         # the prefill only, so the model is forced to generate the target token
-        def __init__(self, emb, nlayers):
+        def __init__(self, emb):
             self.emb = emb
-            self.nlayers = nlayers
             self.injected = False
 
         def processActivations(self, actbig, i):
-            if not self.injected and i == self.nlayers - 1:
+            if not self.injected and i == nlayers - 1:
                 print("injecting target embedding at last layer (prefill) shape=" + str(actbig.shape))
                 self.injected = True
                 print("injected vector first 5 values:", self.emb[:5])
                 return np.broadcast_to(self.emb, actbig.shape).copy()
             return None # do not modify activations
 
-    handler = ActivsInjector(emb, len(connLayers))
-    sharedRAM, procCPP = initLlamacpp("./", connLayers, handler)
+    handler = ActivsInjector(emb)
+    sharedRAM, procCPP = initLlamacpp("./", handler)
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
@@ -492,17 +535,22 @@ def injectActivation(prompts_file, arg):
     sharedRAM.join()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python xllamacpp.py <prompts_file> [token_index|vector_file]")
-        print("  without arg: save activations to <prompts>_activs.npz")
-        print("  with token_index: load detembeds.bin and inject the embedding")
-        print("    of that token into the last layer at the prefill step")
-        print("  with vector_file: read the raw float32 vector from that binary file")
-        print("    and inject it directly into the last layer at the prefill step")
-        sys.exit(1)
-    prompts_file = sys.argv[1]
-    if len(sys.argv) >= 3:
-        injectActivation(prompts_file, sys.argv[2])
+    import argparse
+    parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
+    parser.add_argument("prompts_file", help="file with prompts (one per line)")
+    parser.add_argument("--inject_token", type=int, default=None,
+                        help="load detembeds.bin and inject the embedding of this "
+                             "token into the last layer at the prefill step")
+    parser.add_argument("--ladder", type=str, default=None,
+                        help="file with the MLP trained by train.py (e.g. mlp.pt); "
+                             "transform each non-dummy activation through it and "
+                             "reinject the output into llama.cpp")
+    args = parser.parse_args()
+    if args.ladder is not None:
+        runLadder(args.prompts_file, args.ladder)
+    elif args.inject_token is None:
+        # without arg: save activations to <prompts>_activs.npz
+        saveActivations(args.prompts_file)
     else:
-        saveActivations(prompts_file)
+        injectActivation(args.prompts_file, args.inject_token)
 

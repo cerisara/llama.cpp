@@ -5,6 +5,7 @@ echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
 NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py tt > saveemb
 rm tt_activs.npz
+python ./init_layers.py saveemb
 
 NTOKS=1 python ./xllamacpp.py tt > repgld
 rm tt_activs.npz
@@ -18,7 +19,7 @@ a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
  
 goldtok=$(cat repgld | grep PROMPT_TOKENS | cut -c16- | cut -d',' -f$a)
 echo "gold token $goldtok"
-python ./xllamacpp.py tt $goldtok > repfix
+python ./xllamacpp.py tt --inject_token $goldtok > repfix
 rm tt_activs.npz
 cat repfix | grep GEN
 
