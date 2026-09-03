@@ -172,10 +172,14 @@ class SharedMem(threading.Thread):
         protoks = sout['tokens'] 
         return protoks
  
-    def rollout_gen(self, prompt):
+    def rollout_gen(self, prompt, n_predict=NTOKS2GEN, stop=None, temperature=None):
         url = "http://localhost:"+PORT+"/completions"
         data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False,
-                "n_predict": NTOKS2GEN}
+                "n_predict": n_predict}
+        if stop is not None:
+            data["stop"] = stop
+        if temperature is not None:
+            data["temperature"] = temperature
         headers = { "Content-Type": "application/json" }
         print("sending prompt to llama.cpp completions")
         # print the token ids of the prompt, as the completions response only
@@ -536,10 +540,117 @@ def injectActivation(prompts_file, token_index):
     print("Waiting for SharedMem thread to finish...")
     sharedRAM.join()
 
+class NoopHandler:
+    # pass activations through unmodified (used when serving without a ladder)
+    def processActivations(self, actbig, i):
+        return None
+
+def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
+    # serve a local minimal OpenAI-compatible endpoint on the hardcoded LLM,
+    # modified by the ladder MLP when one is given
+    handler = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
+    sharedRAM, procCPP = initLlamacpp("./", handler)
+
+    import json
+    import http.server
+    model_name = modnom.rsplit("/", 1)[-1]
+    # llama.cpp runs with a single slot; serialize the rollouts so the ladder
+    # pairing never sees interleaved activations from concurrent requests
+    serial = threading.Lock()
+
+    class OpenAIHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, fmt, *a):
+            pass
+
+        def _send(self, code, obj):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _req(self):
+            length = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(length)) if length else {}
+
+        def do_GET(self):
+            if self.path == "/v1/models":
+                self._send(200, {"object": "list",
+                                 "data": [{"id": model_name, "object": "model",
+                                           "created": int(time.time()), "owned_by": "xllamacpp"}]})
+            else:
+                self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
+
+        def do_POST(self):
+            if self.path not in ("/v1/chat/completions", "/v1/completions"):
+                self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
+                return
+            req = self._req()
+            with serial:
+                if self.path == "/v1/chat/completions":
+                    messages = req.get("messages", [])
+                    # last user message is the prompt (multi-turn context ignored)
+                    prompt = ""
+                    for m in messages:
+                        c = m.get("content") if isinstance(m, dict) else None
+                        if m.get("role") == "user" and isinstance(c, str):
+                            prompt = c
+                else:
+                    prompt = req.get("prompt", "")
+                    if isinstance(prompt, list):
+                        prompt = "".join(str(p) for p in prompt)
+                mt = req.get("max_tokens")
+                max_tokens = int(mt) if mt is not None else NTOKS2GEN
+                stop = req.get("stop")
+                if stop is not None and not isinstance(stop, list):
+                    stop = [stop]
+                if stop == []:
+                    stop = None
+                res = sharedRAM.rollout_gen(prompt, n_predict=max_tokens, stop=stop,
+                                            temperature=req.get("temperature"))
+                if res is None:
+                    self._send(500, {"error": {"message": "llama.cpp rollout failed", "type": "server_error"}})
+                    return
+                content, toks = res
+                try:
+                    nptok = len(sharedRAM.tokenize(prompt))
+                except Exception:
+                    nptok = 0
+                finish = "length" if len(toks) >= max_tokens else "stop"
+                usage = {"prompt_tokens": nptok, "completion_tokens": len(toks),
+                         "total_tokens": nptok + len(toks)}
+                created = int(time.time())
+                if self.path == "/v1/chat/completions":
+                    self._send(200, {"id": "chatcmpl-xllamacpp", "object": "chat.completion",
+                                     "created": created, "model": model_name,
+                                     "choices": [{"index": 0, "finish_reason": finish,
+                                                  "message": {"role": "assistant", "content": content}}],
+                                     "usage": usage})
+                else:
+                    self._send(200, {"id": "cmpl-xllamacpp", "object": "text_completion",
+                                     "created": created, "model": model_name,
+                                     "choices": [{"index": 0, "text": content,
+                                                  "finish_reason": finish}],
+                                     "usage": usage})
+
+    server = http.server.ThreadingHTTPServer((host, port), OpenAIHandler)
+    print("OpenAI endpoint on http://"+host+":"+str(port)+"/v1 (model "+model_name+")")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        print("Stopping llama.cpp process...")
+        procCPP.stop()
+        sharedRAM.join()
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
-    parser.add_argument("prompts_file", help="file with prompts (one per line)")
+    parser.add_argument("--prompts", type=str, default=None,
+                        help="file with prompts (one per line); omit to serve a local OpenAI endpoint")
     parser.add_argument("--inject_token", type=int, default=None,
                         help="load detembeds.bin and inject the embedding of this "
                              "token into the last layer at the prefill step")
@@ -547,12 +658,21 @@ if __name__ == "__main__":
                         help="file with the MLP trained by train.py (e.g. mlp.pt); "
                              "transform each non-dummy activation through it and "
                              "reinject the output into llama.cpp")
+    parser.add_argument("--host", type=str, default="127.0.0.1",
+                        help="bind address of the OpenAI endpoint")
+    parser.add_argument("--port", type=int, default=8258,
+                        help="port of the OpenAI endpoint")
+    parser.add_argument("--serve", action="store_true",
+                        help="serve the OpenAI endpoint even when --prompts is given")
     args = parser.parse_args()
-    if args.ladder is not None:
-        runLadder(args.prompts_file, args.ladder)
+    if args.prompts is None or args.serve:
+        # no prompt file: serve the hardcoded LLM (plus the ladder when given)
+        serveOpenAI(args.ladder, args.host, args.port)
+    elif args.ladder is not None:
+        runLadder(args.prompts, args.ladder)
     elif args.inject_token is None:
         # without arg: save activations to <prompts>_activs.npz
-        saveActivations(args.prompts_file)
+        saveActivations(args.prompts)
     else:
-        injectActivation(args.prompts_file, args.inject_token)
+        injectActivation(args.prompts, args.inject_token)
 
