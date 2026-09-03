@@ -61,6 +61,8 @@ class SharedMem(threading.Thread):
     def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
+        self.prev = None          # buffered tensor from previous read (same layer)
+        self.prev_name = None     # name of that tensor
         threading.Thread.__init__(self)
 
     def get_handler(self):
@@ -118,17 +120,50 @@ class SharedMem(threading.Thread):
             else:
                 # big activations (the ones from the LLM):
                 actbig = np.array(vec, copy=True)
-                # actbig = T x 896
-                # use dummy handler until llama.cpp is really ready, then real one
-                handler = self.get_handler()
-                y = handler.processActivations(actbig, i % nlayers, name_str)
-                if not y is None:
-                    # overwrite the activations into llama.cpp
-                    for j in range(len(vec)):
-                        for k in range(len(vec[j])):
-                            vec[j][k] = y[j][k]
+                # a single layer can be split into consecutive subtensors;
+                # concat them along axis 0 when the name matches the previous
+                if self.prev_name is not None and name_str == self.prev_name:
+                    actbig = np.concatenate([self.prev, actbig], axis=0)
+                    self.prev = None
+                    self.prev_name = None
+                elif self.prev is not None:
+                    # name changed: process the buffered tensor first
+                    handler = self.get_handler()
+                    y = handler.processActivations(self.prev, i % nlayers, self.prev_name)
+                    if not y is None:
+                        for j in range(len(self.prev)):
+                            for k in range(len(self.prev[j])):
+                                self.prev[j][k] = y[j][k]
+                    i += 1
+                    self.prev = None
+                    self.prev_name = None
+                    # now process the current tensor as a new layer
+                    handler = self.get_handler()
+                    y = handler.processActivations(actbig, i % nlayers, name_str)
+                    if not y is None:
+                        for j in range(len(vec)):
+                            for k in range(len(vec[j])):
+                                vec[j][k] = y[j][k]
+                else:
+                    # first tensor for this layer: buffer it for potential concat
+                    self.prev = actbig
+                    self.prev_name = name_str
+                    handler = self.get_handler()
+                    y = handler.processActivations(actbig, i % nlayers, name_str)
+                    if not y is None:
+                        for j in range(len(vec)):
+                            for k in range(len(vec[j])):
+                                vec[j][k] = y[j][k]
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
+        # process any remaining buffered tensor (last layer's tail)
+        if self.prev is not None:
+            handler = self.get_handler()
+            y = handler.processActivations(self.prev, i % nlayers, self.prev_name)
+            if not y is None:
+                for j in range(len(self.prev)):
+                    for k in range(len(self.prev[j])):
+                        self.prev[j][k] = y[j][k]
             i += 1
         print("xllamacpp stopping; removing semaphores1")
         os.system('rm /dev/shm/sem.py2c_sem')
