@@ -459,6 +459,8 @@ def runLadder(prompts_file, mlpfile):
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
+        prompts = ['\n'.join(prompts)]
+        print("promptlen", len(prompts), len(prompts[0]))
 
     print("Triggering rollouts with ladder MLP...")
     for utt in prompts:
