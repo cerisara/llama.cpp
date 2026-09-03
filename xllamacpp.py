@@ -53,7 +53,7 @@ else:
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
     # initializing (warmup or leftovers from a previous run).
-    def processActivations(self, actbig, i):
+    def processActivations(self, actbig, i, node_name=""):
         print("DUMMY consuming activation "+str(i)+" shape="+str(actbig.shape)+" first="+str(actbig.flatten()[:5]))
         return None # do not modify activations
 
@@ -105,8 +105,7 @@ class SharedMem(threading.Thread):
             print('python wait layer',i)
             self.sem_c2p.acquire()
             print("now reading layer from shared buffer",i)
-            vec = self.get_buffer_view()
-
+            vec, name_str = self.get_buffer_view()
             if vec is None:
                 # llamacpp is quitting: it warns this listener by writing the
                 # sentinel magic value 424242
@@ -122,7 +121,7 @@ class SharedMem(threading.Thread):
                 # actbig = T x 896
                 # use dummy handler until llama.cpp is really ready, then real one
                 handler = self.get_handler()
-                y = handler.processActivations(actbig, i % nlayers)
+                y = handler.processActivations(actbig, i % nlayers, name_str)
                 if not y is None:
                     # overwrite the activations into llama.cpp
                     for j in range(len(vec)):
@@ -141,8 +140,12 @@ class SharedMem(threading.Thread):
         start += 4
         ne1 = np.frombuffer(mv, dtype=np.float32)
         ne1 = ne1.item()
-        if ne1==424242: return None
+        if ne1==424242: return None, None
         ne1 = int(ne1)
+        # read the 100-char node name (stored as 100 float32 bytes)
+        name_bytes = np.frombuffer(bytes(self.buf[start : start + 100*4]), dtype=np.uint8)
+        name_str = name_bytes.tobytes().split(b'\x00')[0].decode('ascii', errors='replace')
+        start += 100*4
         mv = self.buf[start : start + 4]
         start += 4
         ne0 = int(np.frombuffer(mv, dtype=np.float32).item())
@@ -150,7 +153,7 @@ class SharedMem(threading.Thread):
         vec = np.frombuffer(mv, dtype=np.float32)
         vec.shape = (ne1,ne0)
         # for i in range(ne1): print(vec[i][0])
-        return vec
+        return vec, name_str
 
     def detokenize(self, toks):
         url = "http://localhost:"+PORT+"/detokenize"
@@ -324,17 +327,20 @@ class ActivsSaver:
     # streams each activation tensor to disk as its own gzip-compressed chunk,
     # so only one tensor is ever held in RAM at a time.
     # on-disk format per chunk:
-    #   int32 ndim, int32[ndim] shape, int64 len(compressed), gzip bytes
+    #   int32 ndim, int32[ndim] shape, int32 len(name), bytes name, int64 len(compressed), gzip bytes
     def __init__(self, outfile):
         self.outfile = outfile
         self.n = 0
         self.f = open(outfile, "ab")
 
-    def save_one(self, actbig):
+    def save_one(self, actbig, node_name=""):
         shape = np.asarray(actbig.shape, dtype=np.int32)
+        name_bytes = node_name.encode('ascii', errors='replace')
         comp = gzip.compress(np.ascontiguousarray(actbig, dtype=np.float32).tobytes())
         self.f.write(np.array([len(shape)], dtype=np.int32).tobytes())
         self.f.write(shape.tobytes())
+        self.f.write(np.array([len(name_bytes)], dtype=np.int32).tobytes())
+        self.f.write(name_bytes)
         self.f.write(np.array([len(comp)], dtype=np.int64).tobytes())
         self.f.write(comp)
         self.f.flush()
@@ -347,17 +353,21 @@ class ActivsSaver:
 def load_activs(infile):
     # reads back the chunks written by ActivsSaver, in order
     activs = []
+    names = []
     with open(infile, "rb") as f:
         while True:
             head = f.read(4)
             if len(head) == 0: break
             ndim = np.frombuffer(head, dtype=np.int32).item()
             shape = np.frombuffer(f.read(4*ndim), dtype=np.int32).tolist()
+            namelen = np.frombuffer(f.read(4), dtype=np.int32).item()
+            name = f.read(namelen).decode('ascii', errors='replace')
+            names.append(name)
             nbytes = np.frombuffer(f.read(8), dtype=np.int64).item()
             data = np.frombuffer(gzip.decompress(f.read(nbytes)), dtype=np.float32)
             data.shape = shape
             activs.append(data)
-    return activs
+    return activs, names
 
 def saveActivations(prompts_file):
     class ActivsHandler:
@@ -369,11 +379,11 @@ def saveActivations(prompts_file):
             self.outfile = outfile
             self.saver = ActivsSaver(outfile)
 
-        def processActivations(self, actbig, i):
+        def processActivations(self, actbig, i, node_name=""):
             self.n += 1
             if actbig.shape[0]>0:
-                print("saving activation "+str(i)+" shape="+str(actbig.shape))
-                self.saver.save_one(actbig)
+                print("saving activation "+str(i)+" shape="+str(actbig.shape)+" node="+node_name)
+                self.saver.save_one(actbig, node_name)
                 self.processed_once.set()
             else:
                 print("WARNING: do not save activations "+str(actbig.shape))
@@ -434,7 +444,7 @@ class LadderHandler:
         self.prev = None  # previous (l_out-16) activation, paired with the next one
         self.n = 0
 
-    def processActivations(self, actbig, i):
+    def processActivations(self, actbig, i, node_name=""):
         actbig = np.asarray(actbig, dtype=np.float32)
         if self.prev is None:
             # first half of the input pair (l_out-16): just buffer it unchanged
@@ -509,7 +519,7 @@ def injectActivation(prompts_file, token_index):
             self.emb = emb
             self.injected = False
 
-        def processActivations(self, actbig, i):
+        def processActivations(self, actbig, i, node_name=""):
             if not self.injected and i == nlayers - 1:
                 print("injecting target embedding at last layer (prefill) shape=" + str(actbig.shape))
                 self.injected = True
@@ -542,7 +552,7 @@ def injectActivation(prompts_file, token_index):
 
 class NoopHandler:
     # pass activations through unmodified (used when serving without a ladder)
-    def processActivations(self, actbig, i):
+    def processActivations(self, actbig, i, node_name=""):
         return None
 
 def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
