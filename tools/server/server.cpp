@@ -54,11 +54,17 @@ struct callback_data {
     std::vector<uint8_t> data;
 };
 
-static void detson_send_tensor(uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
+static void detson_send_tensor(const char * name, uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
     float sum = 0;
 
     // Fill buffer
     int bufidx = 0;
+    char namebuf[100];
+    strncpy(namebuf, name, 99);
+    namebuf[99] = '\0';
+    for (int i = 0; i < 100; i++) {
+        shm->buffers[0][bufidx++] = (float)(unsigned char)namebuf[i];
+    }
     for (int64_t i3 = 0; i3 < ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < ne[2]; i2++) {
             int32_t val = ne[1];
@@ -233,7 +239,7 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
         if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 			fprintf(stderr,"detsoncpp detected layer2send\n");
                 uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
-                detson_send_tensor(data, t->type, t->ne, t->nb);
+                detson_send_tensor(t->name, data, t->type, t->ne, t->nb);
 
                 if (detsavelayer[i+1]==NULL) {
                     if (shm->buffers[0][0] != 424242.0f) {
