@@ -224,6 +224,18 @@ class SharedMem(threading.Thread):
         print("Response body:", len(sout))
         if str(response.status_code)[0]=="2" and sout!=None: return sout['content'], sout['tokens']
         return None
+
+    def raw_rollout(self, req, endpoint):
+        # post a client payload unchanged to one of llama-server's OpenAI endpoints
+        # and return the raw (already OpenAI-formatted) response
+        url = "http://localhost:"+PORT+endpoint
+        headers = { "Content-Type": "application/json" }
+        print("sending raw payload to llama-server", endpoint)
+        response = requests.post(url, json=req, headers=headers)
+        print("Status code:", response.status_code)
+        if str(response.status_code)[0] != "2":
+            return None
+        return response.json()
  
     def rollout_train(self, prompt):
         # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
@@ -628,66 +640,26 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
             req = self._req()
             print("DEBUG full prompt",str(req))
             with serial:
-                if False:
-                    # TODO: modify rollout_gen() so that, in serve mode, the json payload in req is directly passed to llama-server
-                    # instead of reconstructing a json payload in rollout_gen()
-                    # actually, we do not need to call rollout_gen() at all, just pass the payload as a POST to llama-server
+                # relay the client payload as-is to llama-server's OpenAI endpoint.
+                # llama.cpp understands the OpenAI chat/completion format natively,
+                # so we forward the json unchanged instead of reconstructing it here
+                # (TODO). The ladder MLP still transforms every activation during the
+                # rollout, because the shared-memory hook fires on the Llama forward
+                # pass regardless of which llama-server endpoint serves the request.
+                if 'messages' in req:
+                    endpoint = "/v1/chat/completions"
+                elif 'prompt' in req:
+                    endpoint = "/v1/completions"
                 else:
-                    if 'messages' in req:
-                        messages = req.get("messages", [])
-                        prompt = ""
-                        for m in messages:
-                            c = m.get("content") if isinstance(m, dict) else None
-                            if m.get("role") == "user":
-                                if isinstance(c, str):
-                                    prompt = c
-                                elif isinstance(c, list):
-                                    # multimodal payload: content is an array of
-                                    # {type, text} parts; keep only the text field
-                                    if len(c) > 1:
-                                        print("WARNING: content array has more than one element, keeping only text parts")
-                                    texts = [p.get("text") for p in c
-                                             if isinstance(p, dict) and isinstance(p.get("text"), str)]
-                                    prompt = " ".join(texts)
-                    elif 'prompt' in req:
-                        prompt = req.get("prompt", "")
-                        if isinstance(prompt, list): prompt = "".join(str(p) for p in prompt)
-                    else:
-                        prompt = ""
-                        print("ERROR in json payload", req)
-                mt = req.get("max_completion_tokens", req.get("max_tokens"))
-                max_tokens = int(mt) if mt is not None else (NTOKS2GEN if NTOKS_IS_SET else -1)
-                stop = req.get("stop")
-                if stop is not None and not isinstance(stop, list): stop = [stop]
-                if stop == []: stop = None
-                res = sharedRAM.rollout_gen(prompt, n_predict=max_tokens, stop=stop,
-                                            temperature=req.get("temperature"))
+                    self._send(500, {"error": {"message": "invalid payload: no 'messages' or 'prompt'",
+                                               "type": "invalid_request_error"}})
+                    return
+                res = sharedRAM.raw_rollout(req, endpoint)
                 if res is None:
                     self._send(500, {"error": {"message": "llama.cpp rollout failed", "type": "server_error"}})
                     return
-                content, toks = res
-                print("llama-server returned:",content)
-                try:
-                    nptok = len(sharedRAM.tokenize(prompt))
-                except Exception:
-                    nptok = 0
-                # n_predict -1 means generation until end-of-sentence, never "length"
-                finish = "stop" if max_tokens < 0 else ("length" if len(toks) >= max_tokens else "stop")
-                usage = {"prompt_tokens": nptok, "completion_tokens": len(toks),
-                         "total_tokens": nptok + len(toks)}
-                created = int(time.time())
-                if self.path == "/v1/chat/completions":
-                    self._send(200, {"id": "chatcmpl-xllamacpp", "object": "chat.completion",
-                                     "created": created, "model": model_name,
-                                     "choices": [{"index": 0, "finish_reason": finish,
-                                                  "message": {"role": "assistant", "content": content}}],
-                                     "usage": usage})
-                else:
-                    self._send(200, {"id": "cmpl-xllamacpp", "object": "text_completion",
-                                     "created": created, "model": model_name,
-                                     "choices": [{"index": 0, "text": content,
-                                                  "finish_reason": finish}],
-                                     "usage": usage})
+                print("llama-server returned:", res)
+                self._send(200, res)
 
     server = http.server.ThreadingHTTPServer((host, port), OpenAIHandler)
     print("OpenAI endpoint on http://"+host+":"+str(port)+"/v1 (model "+model_name+")")
