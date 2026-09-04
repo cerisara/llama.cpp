@@ -625,20 +625,23 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
             req = self._req()
             print("DEBUG full prompt",str(req))
             with serial:
-                # llama.cpp will apply the chat template, so just pass through:
-                prompt = str(req)
-
-                # if self.path == "/v1/chat/completions":
-                #     messages = req.get("messages", [])
-                #     # last user message is the prompt (multi-turn context ignored)
-                #     prompt = ""
-                #     for m in messages:
-                #         c = m.get("content") if isinstance(m, dict) else None
-                #         if m.get("role") == "user" and isinstance(c, str): prompt = c
-                # else:
-                #     prompt = req.get("prompt", "")
-                #     if isinstance(prompt, list):
-                #         prompt = "".join(str(p) for p in prompt)
+                if False:
+                    # llama.cpp will apply the chat template, so just pass through:
+                    prompt = str(req)
+                    # Hmm not sure actually
+                else:
+                    if 'messages' in req:
+                        messages = req.get("messages", [])
+                        prompt = ""
+                        for m in messages:
+                            c = m.get("content") if isinstance(m, dict) else None
+                            if m.get("role") == "user" and isinstance(c, str): prompt = c
+                    elif 'prompt' in req:
+                        prompt = req.get("prompt", "")
+                        if isinstance(prompt, list): prompt = "".join(str(p) for p in prompt)
+                    else:
+                        prompt = ""
+                        print("ERROR in json payload", req)
                 mt = req.get("max_completion_tokens", req.get("max_tokens"))
                 max_tokens = int(mt) if mt is not None else NTOKS2GEN
                 stop = req.get("stop")
@@ -650,6 +653,7 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                     self._send(500, {"error": {"message": "llama.cpp rollout failed", "type": "server_error"}})
                     return
                 content, toks = res
+                print("llama-server returned:",content)
                 try:
                     nptok = len(sharedRAM.tokenize(prompt))
                 except Exception:
