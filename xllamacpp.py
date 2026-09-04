@@ -260,15 +260,7 @@ class SharedMem(threading.Thread):
                     yield chunk
         finally:
             response.close()
-        # response.json() relies on requests' charset guessing, which can mangle
-        # or fail to decode non-ASCII UTF-8 in the JSON body; decode the raw
-        # bytes as UTF-8 and json.loads() ourselves
-        try:
-            return json.loads(response.content.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError) as e:
-            print("WARNING: could not parse JSON response ("+str(e)+"); body:", response.text)
-            return None
- 
+
     def rollout_train(self, prompt):
         # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
         url = "http://localhost:"+PORT+"/embeddings"
@@ -693,7 +685,6 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Connection", "keep-alive")
                     self.end_headers()
                     got_chunk = False
                     for chunk in sharedRAM.raw_rollout_stream(req, endpoint):
@@ -706,6 +697,10 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                         err = "data: {\"error\":{\"message\":\"llama.cpp rollout failed\",\"type\":\"server_error\"}}\n\n"
                         self.wfile.write(err.encode())
                         self.wfile.flush()
+                    # the SSE body has no Content-Length/chunked framing, so its
+                    # only terminator is connection close; close it so the caller
+                    # unambiguously sees the end of the stream after [DONE]
+                    self.close_connection = True
                     return
                 res = sharedRAM.raw_rollout(req, endpoint)
                 if res is None:
