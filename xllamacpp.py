@@ -20,6 +20,9 @@ import signal
 import requests
 
 NTOKS2GEN = int(os.environ.get("NTOKS", 5))
+# when NTOKS is not set, serve mode generates until end-of-sentence instead
+# of a fixed number of tokens (n_predict = -1 in llama.cpp means "infinite")
+NTOKS_IS_SET = "NTOKS" in os.environ
 PORT = "8257"
 SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
@@ -643,7 +646,7 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                         prompt = ""
                         print("ERROR in json payload", req)
                 mt = req.get("max_completion_tokens", req.get("max_tokens"))
-                max_tokens = int(mt) if mt is not None else NTOKS2GEN
+                max_tokens = int(mt) if mt is not None else (NTOKS2GEN if NTOKS_IS_SET else -1)
                 stop = req.get("stop")
                 if stop is not None and not isinstance(stop, list): stop = [stop]
                 if stop == []: stop = None
@@ -658,7 +661,8 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                     nptok = len(sharedRAM.tokenize(prompt))
                 except Exception:
                     nptok = 0
-                finish = "length" if len(toks) >= max_tokens else "stop"
+                # n_predict -1 means generation until end-of-sentence, never "length"
+                finish = "stop" if max_tokens < 0 else ("length" if len(toks) >= max_tokens else "stop")
                 usage = {"prompt_tokens": nptok, "completion_tokens": len(toks),
                          "total_tokens": nptok + len(toks)}
                 created = int(time.time())
