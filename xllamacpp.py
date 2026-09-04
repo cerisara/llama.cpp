@@ -18,6 +18,7 @@ import time
 import threading
 import signal
 import requests
+import json
 
 NTOKS2GEN = int(os.environ.get("NTOKS", 5))
 # when NTOKS is not set, serve mode generates until end-of-sentence instead
@@ -233,9 +234,40 @@ class SharedMem(threading.Thread):
         print("sending raw payload to llama-server", endpoint)
         response = requests.post(url, json=req, headers=headers)
         print("Status code:", response.status_code)
+        if str(response.status_code)[0] != "2": return None
+
+    def raw_rollout_stream(self, req, endpoint):
+        # post a client payload unchanged to llama-server's OpenAI endpoint with
+        # the stream flag on, and yield the raw SSE bytes as they arrive instead
+        # of buffering the whole response. On any upstream failure it yields
+        # nothing, so the caller can tell it apart from a clean-but-empty stream.
+        url = "http://localhost:"+PORT+endpoint
+        headers = { "Content-Type": "application/json" }
+        print("sending raw payload to llama-server", endpoint)
+        try:
+            response = requests.post(url, json=req, headers=headers, stream=True)
+        except requests.RequestException as e:
+            print("WARNING: request failed ("+str(e)+")")
+            return
         if str(response.status_code)[0] != "2":
+            print("WARNING: llama-server returned status "+str(response.status_code))
+            return
+        try:
+            # iter_content honors the upstream chunk boundaries, so the SSE
+            # events are relayed unchanged and in real time
+            for chunk in response.iter_content(chunk_size=None):
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+        # response.json() relies on requests' charset guessing, which can mangle
+        # or fail to decode non-ASCII UTF-8 in the JSON body; decode the raw
+        # bytes as UTF-8 and json.loads() ourselves
+        try:
+            return json.loads(response.content.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as e:
+            print("WARNING: could not parse JSON response ("+str(e)+"); body:", response.text)
             return None
-        return response.json()
  
     def rollout_train(self, prompt):
         # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
@@ -638,12 +670,12 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
                 return
             req = self._req()
-            print("DEBUG full prompt",str(req))
+            # print("DEBUG full prompt",str(req))
             with serial:
                 # relay the client payload as-is to llama-server's OpenAI endpoint.
                 # llama.cpp understands the OpenAI chat/completion format natively,
                 # so we forward the json unchanged instead of reconstructing it here
-                # (TODO). The ladder MLP still transforms every activation during the
+                # The ladder MLP still transforms every activation during the
                 # rollout, because the shared-memory hook fires on the Llama forward
                 # pass regardless of which llama-server endpoint serves the request.
                 if 'messages' in req:
@@ -653,6 +685,27 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
                 else:
                     self._send(500, {"error": {"message": "invalid payload: no 'messages' or 'prompt'",
                                                "type": "invalid_request_error"}})
+                    return
+                if req.get("stream", False):
+                    # llama-server replies in SSE, token by token; relay the
+                    # stream to the client progressively instead of buffering
+                    # the whole response (which would mis-parse as JSON below)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.end_headers()
+                    got_chunk = False
+                    for chunk in sharedRAM.raw_rollout_stream(req, endpoint):
+                        got_chunk = True
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    if not got_chunk:
+                        # upstream failed before any SSE byte: send the error
+                        # as an SSE event, since the 200 headers are already out
+                        err = "data: {\"error\":{\"message\":\"llama.cpp rollout failed\",\"type\":\"server_error\"}}\n\n"
+                        self.wfile.write(err.encode())
+                        self.wfile.flush()
                     return
                 res = sharedRAM.raw_rollout(req, endpoint)
                 if res is None:
