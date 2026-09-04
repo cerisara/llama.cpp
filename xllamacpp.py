@@ -629,16 +629,26 @@ def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
             print("DEBUG full prompt",str(req))
             with serial:
                 if False:
-                    # llama.cpp will apply the chat template, so just pass through:
-                    prompt = str(req)
-                    # Hmm not sure actually
+                    # TODO: modify rollout_gen() so that, in serve mode, the json payload in req is directly passed to llama-server
+                    # instead of reconstructing a json payload in rollout_gen()
+                    # actually, we do not need to call rollout_gen() at all, just pass the payload as a POST to llama-server
                 else:
                     if 'messages' in req:
                         messages = req.get("messages", [])
                         prompt = ""
                         for m in messages:
                             c = m.get("content") if isinstance(m, dict) else None
-                            if m.get("role") == "user" and isinstance(c, str): prompt = c
+                            if m.get("role") == "user":
+                                if isinstance(c, str):
+                                    prompt = c
+                                elif isinstance(c, list):
+                                    # multimodal payload: content is an array of
+                                    # {type, text} parts; keep only the text field
+                                    if len(c) > 1:
+                                        print("WARNING: content array has more than one element, keeping only text parts")
+                                    texts = [p.get("text") for p in c
+                                             if isinstance(p, dict) and isinstance(p.get("text"), str)]
+                                    prompt = " ".join(texts)
                     elif 'prompt' in req:
                         prompt = req.get("prompt", "")
                         if isinstance(prompt, list): prompt = "".join(str(p) for p in prompt)
