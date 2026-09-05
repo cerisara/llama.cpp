@@ -143,8 +143,8 @@ class SharedMem(threading.Thread):
             self.process_pending(i)
             i += 1
         print("xllamacpp stopping; removing semaphores1")
-        os.system('rm /dev/shm/sem.py2c_sem')
-        os.system('rm /dev/shm/sem.c2py_sem')
+        os.system('rm -f /dev/shm/sem.py2c_sem')
+        os.system('rm -f /dev/shm/sem.c2py_sem')
  
     def process_pending(self, i):
         # pass the complete tensor of one layer (possibly assembled from
@@ -348,8 +348,8 @@ class AsyncScriptRunner:
 def initLlamacpp(llamacppdir, activsHandler):
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
-    os.system('rm /dev/shm/sem.py2c_sem')
-    os.system('rm /dev/shm/sem.c2py_sem')
+    os.system('rm -f /dev/shm/sem.py2c_sem')
+    os.system('rm -f /dev/shm/sem.c2py_sem')
 
     # set once llama.cpp prints the listening text: then SharedMem switches
     # from the dummy handler to the real one
