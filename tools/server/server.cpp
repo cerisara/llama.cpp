@@ -245,7 +245,7 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
                     if (shm->buffers[0][0] != 424242.0f) {
 						fprintf(stderr,"detsoncpp ecrase last activs\n");
                         // recopie la shared RAM dans le computation graph de llamacpp
-                        int bufidx = 2; // skip the 2 first ints = dims
+                        int bufidx = 102; // skip the 2 first ints = dims and the node name !
                         uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
                         for (int64_t i3 = 0; i3 < t->ne[3]; i3++) {
                             for (int64_t i2 = 0; i2 < t->ne[2]; i2++) {

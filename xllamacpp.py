@@ -38,21 +38,21 @@ MODELS = [
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
     ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
 ]
-modnom, is_moe = MODELS[2]
+modnom, is_moe = MODELS[0]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
 # (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
 save_emb = bool(os.environ.get("SAVE_EMB"))
 if is_moe:
-    OPTS = ["--embeddings", "--no-mmap", "--temp", "0"]
+    OPTS = ["--no-mmap", "--temp", "0"]
     if not save_emb:
         # push the experts of the first 30 layers to RAM to fit the 35B on GPU
         OPTS += ["--n-gpu-layers", "999", "--n-cpu-moe", "30"]
     else:
         OPTS += ["--n-gpu-layers", "0"]
 else:
-    OPTS = ["--embeddings", "-ngl", "0" if save_emb else "99", "--temp", "0"]
+    OPTS = ["-ngl", "0" if save_emb else "99", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -65,8 +65,6 @@ class SharedMem(threading.Thread):
     def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
-        self.prev = None          # buffered tensor from previous read (same layer)
-        self.prev_name = None     # name of that tensor
         threading.Thread.__init__(self)
 
     def get_handler(self):
@@ -105,12 +103,13 @@ class SharedMem(threading.Thread):
         print("sharedmem thread detected semaphores; now listen to llamacpp activations")
 
         fincpp = False
-        i = 0
+        layer = 0        # index of the current layer within a forward pass
+        prev_name = None # name of the previous layer
         while not fincpp:
             # Wait for C++ to fill buffer
-            print('python wait layer',i)
+            print('python wait layer',layer)
             self.sem_c2p.acquire()
-            print("now reading layer from shared buffer",i)
+            print("now reading layer from shared buffer",layer)
             vec, name_str = self.get_buffer_view()
             if vec is None:
                 # llamacpp is quitting: it warns this listener by writing the
@@ -122,45 +121,42 @@ class SharedMem(threading.Thread):
             if len(vec)==0:
                 print("python got empty c++ vector")
             else:
-                # big activations (the ones from the LLM):
                 actbig = np.array(vec, copy=True)
-                # a layer can arrive as several consecutive subtensors with the
-                # same name: buffer them and concat along axis 0; the tensor is
-                # only complete (i.e. passed to the handler) once a different
-                # name appears, or when llama.cpp quits
-                if self.prev_name is not None and name_str == self.prev_name:
-                    self.prev = np.concatenate([self.prev, actbig], axis=0)
+                ne1, ne0 = actbig.shape
+                # each forward pass is a full layer progression (per ubatch), so
+                # a name change means we moved to the next layer
+                if name_str != prev_name:
+                    if prev_name is not None:
+                        layer += 1
+                    prev_name = name_str
+                is_last = (layer % nlayers) == (nlayers - 1) # last layer before the unembedding
+                handler = self.get_handler()
+                y = handler.processActivations(actbig, layer % nlayers, name_str)
+                if y is None:
+                    pass
+                elif not is_last:
+                    # llamacpp only reads the last layer back, ignore the rest
+                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str
+                          +" changes ignored")
                 else:
-                    if self.prev is not None:
-                        self.process_pending(i)
-                        i += 1
-                    self.prev = actbig
-                    self.prev_name = name_str
+                    # last layer: write the modified last token back before
+                    # llamacpp uses it for the unembedding. llama-server only
+                    # samples the last token of each forward pass, so modifying
+                    # every ubatch's last layer last row is harmless except on
+                    # the final one, which is the one that matters.
+                    self.write_last_token(np.asarray(y, dtype=np.float32), ne1)
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
-        # the last layer is only complete when llama.cpp quits
-        if self.prev is not None:
-            self.process_pending(i)
-            i += 1
         print("xllamacpp stopping; removing semaphores1")
-        os.system('rm /dev/shm/sem.py2c_sem')
-        os.system('rm /dev/shm/sem.c2py_sem')
+        os.system('rm -f /dev/shm/sem.py2c_sem')
+        os.system('rm -f /dev/shm/sem.c2py_sem')
  
-    def process_pending(self, i):
-        # pass the complete tensor of one layer (possibly assembled from
-        # several subtensors) to the handler
-        if self.prev is None:
-            return
-        t, name = self.prev, self.prev_name
-        self.prev = None
-        self.prev_name = None
-        handler = self.get_handler()
-        y = handler.processActivations(t, i % nlayers, name)
-        if not y is None:
-            # by the time the full tensor is assembled the shared buffer
-            # already holds the next tensor, so y cannot be written back yet
-            print("WARNING: handler modified layer "+str(i % nlayers)+" node="+name
-                  +" but write-back is not implemented yet, changes ignored")
+    def write_last_token(self, y, ne1):
+        # write the modified last token of the last layer back into shared RAM,
+        # at the position llamacpp reads it from for the unembedding
+        ne0 = y.shape[-1]
+        off = 4 * (102 + (ne1 - 1) * ne0) # skip node name (100) + ne1 + ne0
+        self.buf[off : off + 4*ne0] = y[-1].astype(np.float32, copy=False).tobytes()
 
     def get_buffer_view(self):
         # Check C++ sentinel at position 0 (written during cleanup)
@@ -348,8 +344,8 @@ class AsyncScriptRunner:
 def initLlamacpp(llamacppdir, activsHandler):
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
-    os.system('rm /dev/shm/sem.py2c_sem')
-    os.system('rm /dev/shm/sem.c2py_sem')
+    os.system('rm -f /dev/shm/sem.py2c_sem')
+    os.system('rm -f /dev/shm/sem.c2py_sem')
 
     # set once llama.cpp prints the listening text: then SharedMem switches
     # from the dummy handler to the real one
@@ -453,6 +449,7 @@ def saveActivations(prompts_file):
     sharedRAM, procCPP = initLlamacpp("./", handler)
 
     print("Triggering rollouts to get activations...")
+    # for is useless: file is a single prompt
     for utt in prompts:
         print("Prompt:", utt)
         s=sharedRAM.rollout_gen(utt)
@@ -541,7 +538,7 @@ def runLadderOnFile(prompts_file, mlpfile):
     sharedRAM.join()
 
 
-def injectActivation(prompts_file, token_index):
+def injectTokenAct(prompts_file, token_index):
     # read only the embedding of a single token from the unembedding matrix
     # that this program saved earlier (run it with SAVE_EMB to produce
     # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
@@ -576,9 +573,11 @@ def injectActivation(prompts_file, token_index):
 
     handler = ActivsInjector(emb)
     sharedRAM, procCPP = initLlamacpp("./", handler)
-
+ 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
+        prompts = ['\n'.join(prompts)]
+        print("promptlen",len(prompts),len(prompts[0]))
 
     print("Triggering rollouts with injected embedding...")
     for utt in prompts:
@@ -707,7 +706,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
     parser.add_argument("--prompts", type=str, default=None,
-                        help="file with prompts (one per line); omit to serve a local OpenAI endpoint")
+                        help="file with the prompt; omit to serve a local OpenAI endpoint")
     parser.add_argument("--inject_token", type=int, default=None,
                         help="load detembeds.bin and inject the embedding of this "
                              "token into the last layer at the prefill step")
@@ -731,5 +730,5 @@ if __name__ == "__main__":
         # without arg: save activations to <prompts>_activs.npz
         saveActivations(args.prompts)
     else:
-        injectActivation(args.prompts, args.inject_token)
+        injectTokenAct(args.prompts, args.inject_token)
 

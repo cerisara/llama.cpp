@@ -1,14 +1,18 @@
+# must be run FIRST before every session
+# sets-up every file required and runs a safe check
+# also, don't forget to cmake llama-server first!
+
 source ~/envs/transformers/bin/activate
 
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
 NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py --prompts tt > saveemb
-rm tt_activs.npz
+rm -f tt_activs.npz
 python ./init_layers.py saveemb
 
 NTOKS=1 python ./xllamacpp.py --prompts tt > repgld
-rm tt_activs.npz
+rm -f tt_activs.npz
 
 echo 'La capitale de la Belgique est' > tt
 NTOKS=5 python ./xllamacpp.py --prompts tt > repbad
@@ -20,6 +24,6 @@ a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
 goldtok=$(cat repgld | grep PROMPT_TOKENS | cut -c16- | cut -d',' -f$a)
 echo "gold token $goldtok"
 python ./xllamacpp.py --prompts tt --inject_token $goldtok > repfix
-rm tt_activs.npz
+rm -f tt_activs.npz
 cat repfix | grep GEN
 
