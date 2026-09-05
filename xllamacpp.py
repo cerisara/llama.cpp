@@ -65,8 +65,6 @@ class SharedMem(threading.Thread):
     def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
-        self.prev = None          # buffered tensor from previous read (same layer)
-        self.prev_name = None     # name of that tensor
         threading.Thread.__init__(self)
 
     def get_handler(self):
@@ -105,12 +103,16 @@ class SharedMem(threading.Thread):
         print("sharedmem thread detected semaphores; now listen to llamacpp activations")
 
         fincpp = False
-        i = 0
+        layer = 0             # index of the current layer group in the forward pass
+        prev_name = None      # name of the previous layer group
+        group_tokens = 0      # rows accumulated for the current layer group
+        sentence_tokens = None # sentence token count, learned from the non-last layers
+        last_acc = 0          # rows of the last layer seen this forward pass
         while not fincpp:
             # Wait for C++ to fill buffer
-            print('python wait layer',i)
+            print('python wait layer',layer)
             self.sem_c2p.acquire()
-            print("now reading layer from shared buffer",i)
+            print("now reading layer from shared buffer",layer)
             vec, name_str = self.get_buffer_view()
             if vec is None:
                 # llamacpp is quitting: it warns this listener by writing the
@@ -122,45 +124,55 @@ class SharedMem(threading.Thread):
             if len(vec)==0:
                 print("python got empty c++ vector")
             else:
-                # big activations (the ones from the LLM):
+                # a layer may arrive as several subtensors sharing one name:
+                # accumulate their rows. The first completed non-last layer gives
+                # the sentence token count before we reach the last layer
                 actbig = np.array(vec, copy=True)
-                # a layer can arrive as several consecutive subtensors with the
-                # same name: buffer them and concat along axis 0; the tensor is
-                # only complete (i.e. passed to the handler) once a different
-                # name appears, or when llama.cpp quits
-                if self.prev_name is not None and name_str == self.prev_name:
-                    self.prev = np.concatenate([self.prev, actbig], axis=0)
+                ne1, ne0 = actbig.shape
+                if name_str == prev_name:
+                    group_tokens += ne1
                 else:
-                    if self.prev is not None:
-                        self.process_pending(i)
-                        i += 1
-                    self.prev = actbig
-                    self.prev_name = name_str
+                    had_prev = prev_name is not None
+                    if had_prev and (layer % nlayers) != nlayers - 1:
+                        # previous layer was complete: its rows == sentence tokens
+                        sentence_tokens = group_tokens
+                    if had_prev:
+                        layer += 1
+                    prev_name = name_str
+                    group_tokens = ne1
+                is_last = (layer % nlayers) == (nlayers - 1) # last layer before the unembedding
+                handler = self.get_handler()
+                y = handler.processActivations(actbig, layer % nlayers, name_str)
+                if y is None:
+                    pass
+                elif not is_last:
+                    # llamacpp only reads the last layer back, ignore the rest
+                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str
+                          +" changes ignored")
+                else:
+                    y = np.asarray(y, dtype=np.float32)
+                    if ne1 == 1:
+                        # a single token (decode step): it is the last token
+                        self.write_last_token(y, ne1)
+                        last_acc = 0
+                    elif sentence_tokens is not None and last_acc + ne1 == sentence_tokens:
+                        # final subtensor of the last layer: its last row is the last token
+                        self.write_last_token(y, ne1)
+                        last_acc = 0
+                    else:
+                        last_acc += ne1
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
-        # the last layer is only complete when llama.cpp quits
-        if self.prev is not None:
-            self.process_pending(i)
-            i += 1
         print("xllamacpp stopping; removing semaphores1")
         os.system('rm -f /dev/shm/sem.py2c_sem')
         os.system('rm -f /dev/shm/sem.c2py_sem')
  
-    def process_pending(self, i):
-        # pass the complete tensor of one layer (possibly assembled from
-        # several subtensors) to the handler
-        if self.prev is None:
-            return
-        t, name = self.prev, self.prev_name
-        self.prev = None
-        self.prev_name = None
-        handler = self.get_handler()
-        y = handler.processActivations(t, i % nlayers, name)
-        if not y is None:
-            # by the time the full tensor is assembled the shared buffer
-            # already holds the next tensor, so y cannot be written back yet
-            print("WARNING: handler modified layer "+str(i % nlayers)+" node="+name
-                  +" but write-back is not implemented yet, changes ignored")
+    def write_last_token(self, y, ne1):
+        # write the modified last token of the last layer back into shared RAM,
+        # at the position llamacpp reads it from for the unembedding
+        ne0 = y.shape[-1]
+        off = 4 * (102 + (ne1 - 1) * ne0) # skip node name (100) + ne1 + ne0
+        self.buf[off : off + 4*ne0] = y[-1].astype(np.float32, copy=False).tobytes()
 
     def get_buffer_view(self):
         # Check C++ sentinel at position 0 (written during cleanup)
@@ -541,7 +553,7 @@ def runLadderOnFile(prompts_file, mlpfile):
     sharedRAM.join()
 
 
-def injectActivation(prompts_file, token_index):
+def injectTokenAct(prompts_file, token_index):
     # read only the embedding of a single token from the unembedding matrix
     # that this program saved earlier (run it with SAVE_EMB to produce
     # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
@@ -731,5 +743,5 @@ if __name__ == "__main__":
         # without arg: save activations to <prompts>_activs.npz
         saveActivations(args.prompts)
     else:
-        injectActivation(args.prompts, args.inject_token)
+        injectTokenAct(args.prompts, args.inject_token)
 
