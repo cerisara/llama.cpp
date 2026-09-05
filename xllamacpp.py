@@ -449,6 +449,7 @@ def saveActivations(prompts_file):
     sharedRAM, procCPP = initLlamacpp("./", handler)
 
     print("Triggering rollouts to get activations...")
+    # for is useless: file is a single prompt
     for utt in prompts:
         print("Prompt:", utt)
         s=sharedRAM.rollout_gen(utt)
@@ -572,9 +573,11 @@ def injectTokenAct(prompts_file, token_index):
 
     handler = ActivsInjector(emb)
     sharedRAM, procCPP = initLlamacpp("./", handler)
-
+ 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
+        prompts = ['\n'.join(prompts)]
+        print("promptlen",len(prompts),len(prompts[0]))
 
     print("Triggering rollouts with injected embedding...")
     for utt in prompts:
@@ -703,7 +706,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
     parser.add_argument("--prompts", type=str, default=None,
-                        help="file with prompts (one per line); omit to serve a local OpenAI endpoint")
+                        help="file with the prompt; omit to serve a local OpenAI endpoint")
     parser.add_argument("--inject_token", type=int, default=None,
                         help="load detembeds.bin and inject the embedding of this "
                              "token into the last layer at the prefill step")
