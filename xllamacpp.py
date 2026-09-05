@@ -103,11 +103,8 @@ class SharedMem(threading.Thread):
         print("sharedmem thread detected semaphores; now listen to llamacpp activations")
 
         fincpp = False
-        layer = 0             # index of the current layer group in the forward pass
-        prev_name = None      # name of the previous layer group
-        group_tokens = 0      # rows accumulated for the current layer group
-        sentence_tokens = None # sentence token count, learned from the non-last layers
-        last_acc = 0          # rows of the last layer seen this forward pass
+        layer = 0        # index of the current layer within a forward pass
+        prev_name = None # name of the previous layer
         while not fincpp:
             # Wait for C++ to fill buffer
             print('python wait layer',layer)
@@ -124,22 +121,14 @@ class SharedMem(threading.Thread):
             if len(vec)==0:
                 print("python got empty c++ vector")
             else:
-                # a layer may arrive as several subtensors sharing one name:
-                # accumulate their rows. The first completed non-last layer gives
-                # the sentence token count before we reach the last layer
                 actbig = np.array(vec, copy=True)
                 ne1, ne0 = actbig.shape
-                if name_str == prev_name:
-                    group_tokens += ne1
-                else:
-                    had_prev = prev_name is not None
-                    if had_prev and (layer % nlayers) != nlayers - 1:
-                        # previous layer was complete: its rows == sentence tokens
-                        sentence_tokens = group_tokens
-                    if had_prev:
+                # each forward pass is a full layer progression (per ubatch), so
+                # a name change means we moved to the next layer
+                if name_str != prev_name:
+                    if prev_name is not None:
                         layer += 1
                     prev_name = name_str
-                    group_tokens = ne1
                 is_last = (layer % nlayers) == (nlayers - 1) # last layer before the unembedding
                 handler = self.get_handler()
                 y = handler.processActivations(actbig, layer % nlayers, name_str)
@@ -150,17 +139,12 @@ class SharedMem(threading.Thread):
                     print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str
                           +" changes ignored")
                 else:
-                    y = np.asarray(y, dtype=np.float32)
-                    if ne1 == 1:
-                        # a single token (decode step): it is the last token
-                        self.write_last_token(y, ne1)
-                        last_acc = 0
-                    elif sentence_tokens is not None and last_acc + ne1 == sentence_tokens:
-                        # final subtensor of the last layer: its last row is the last token
-                        self.write_last_token(y, ne1)
-                        last_acc = 0
-                    else:
-                        last_acc += ne1
+                    # last layer: write the modified last token back before
+                    # llamacpp uses it for the unembedding. llama-server only
+                    # samples the last token of each forward pass, so modifying
+                    # every ubatch's last layer last row is harmless except on
+                    # the final one, which is the one that matters.
+                    self.write_last_token(np.asarray(y, dtype=np.float32), ne1)
             print("gonna tell llamacpp to continue")
             self.sem_py2c.release()
         print("xllamacpp stopping; removing semaphores1")
