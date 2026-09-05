@@ -45,14 +45,14 @@ modnom, is_moe = MODELS[0]
 # (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
 save_emb = bool(os.environ.get("SAVE_EMB"))
 if is_moe:
-    OPTS = ["--embeddings", "--no-mmap", "--temp", "0"]
+    OPTS = ["--no-mmap", "--temp", "0"]
     if not save_emb:
         # push the experts of the first 30 layers to RAM to fit the 35B on GPU
         OPTS += ["--n-gpu-layers", "999", "--n-cpu-moe", "30"]
     else:
         OPTS += ["--n-gpu-layers", "0"]
 else:
-    OPTS = ["--embeddings", "-ngl", "0" if save_emb else "99", "--temp", "0"]
+    OPTS = ["-ngl", "0" if save_emb else "99", "--temp", "0"]
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is

@@ -1,5 +1,6 @@
 # must be run FIRST before every session
 # sets-up every file required and runs a safe check
+# also, don't forget to cmake llama-server first!
 
 source ~/envs/transformers/bin/activate
 
