@@ -32,27 +32,26 @@ SEM_P2C = "/py2c_sem"
 with open("layers2save") as f:
     nlayers = sum(1 for line in f if line.strip())
 
-# model registry: (path, is_moe). Pick one by editing the selection line below
-MODELS = [
-    ("/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf", False),
-    ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
-    ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
-]
-modnom, is_moe = MODELS[0]
-
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
 # (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
 save_emb = bool(os.environ.get("SAVE_EMB"))
-if is_moe:
-    OPTS = ["--no-mmap", "--temp", "0"]
-    if not save_emb:
-        # push the experts of the first 30 layers to RAM to fit the 35B on GPU
-        OPTS += ["--n-gpu-layers", "999", "--n-cpu-moe", "30"]
+
+def build_opts(modnom):
+    # the model filename usually embeds whether it is a MoE (e.g. "A3B");
+    # the check is only used to pick sensible GPU/CPU offload defaults
+    if "b-a" in modnom.lower():
+        # MoE
+        OPTS = ["--no-mmap", "--temp", "0"]
+        if not save_emb:
+            # push the experts of the first 30 layers to RAM to fit e.g. 35B on GPU
+            OPTS += ["--n-gpu-layers", "999", "--n-cpu-moe", "30"]
+        else:
+            OPTS += ["--n-gpu-layers", "0"]
     else:
-        OPTS += ["--n-gpu-layers", "0"]
-else:
-    OPTS = ["-ngl", "0" if save_emb else "99", "--temp", "0"]
+        # dense
+        OPTS = ["-ngl", "0" if save_emb else "99", "--temp", "0"]
+    return OPTS
 
 class DummyHandler:
     # consumes and prints every activation sent by llama.cpp while it is
@@ -341,7 +340,7 @@ class AsyncScriptRunner:
                 self.stderr_thread.join()
                 print("Script stopped.")
  
-def initLlamacpp(llamacppdir, activsHandler):
+def initLlamacpp(llamacppdir, activsHandler, modnom):
     # toujours nettoyer les semaphores precedentes avant de relancer llamacpp et SharedMem
     print("removing semaphores0")
     os.system('rm -f /dev/shm/sem.py2c_sem')
@@ -356,7 +355,7 @@ def initLlamacpp(llamacppdir, activsHandler):
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
-                               "--port", PORT, *OPTS,
+                               "--port", PORT, *build_opts(modnom),
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
     # "llama_server: listening on http://..." when it is really ready. While
@@ -414,7 +413,7 @@ def load_activs(infile):
             activs.append(data)
     return activs, names
 
-def saveActivations(prompts_file):
+def saveActivations(prompts_file, modnom):
     class ActivsHandler:
         def __init__(self, outfile):
             # the real activs handler only runs after llama.cpp is listening,
@@ -446,7 +445,7 @@ def saveActivations(prompts_file):
     handler = ActivsHandler(outfile)
     # WARNING: the last element MUST BE the last layer, just before the
     # unembedding matrix, ie. after the last global norm
-    sharedRAM, procCPP = initLlamacpp("./", handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
 
     print("Triggering rollouts to get activations...")
     # for is useless: file is a single prompt
@@ -511,9 +510,9 @@ class LadderHandler:
         return out.astype(np.float32)
 
 
-def runLadderOnFile(prompts_file, mlpfile):
+def runLadderOnFile(prompts_file, mlpfile, modnom):
     handler = LadderHandler(mlpfile)
-    sharedRAM, procCPP = initLlamacpp("./", handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
 
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
@@ -538,7 +537,7 @@ def runLadderOnFile(prompts_file, mlpfile):
     sharedRAM.join()
 
 
-def injectTokenAct(prompts_file, token_index):
+def injectTokenAct(prompts_file, token_index, modnom):
     # read only the embedding of a single token from the unembedding matrix
     # that this program saved earlier (run it with SAVE_EMB to produce
     # detembeds.bin/detembeds.dims), without loading the whole matrix in RAM
@@ -572,7 +571,7 @@ def injectTokenAct(prompts_file, token_index):
             return None # do not modify activations
 
     handler = ActivsInjector(emb)
-    sharedRAM, procCPP = initLlamacpp("./", handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
  
     with open(prompts_file) as f:
         prompts = [line.rstrip('\n') for line in f if line.strip()]
@@ -601,11 +600,11 @@ class NoopHandler:
     def processActivations(self, actbig, i, node_name=""):
         return None
 
-def serveOpenAI(ladder_file=None, host="127.0.0.1", port=8258):
-    # serve a local minimal OpenAI-compatible endpoint on the hardcoded LLM,
+def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
+    # serve a local minimal OpenAI-compatible endpoint on the given LLM,
     # modified by the ladder MLP when one is given
     handler = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
-    sharedRAM, procCPP = initLlamacpp("./", handler)
+    sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
 
     import json
     import http.server
@@ -707,6 +706,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="llama.cpp latent activation rollout")
     parser.add_argument("--prompts", type=str, default=None,
                         help="file with the prompt; omit to serve a local OpenAI endpoint")
+    parser.add_argument("--model", type=str, required=True,
+                        help="path to the .gguf model file")
     parser.add_argument("--inject_token", type=int, default=None,
                         help="load detembeds.bin and inject the embedding of this "
                              "token into the last layer at the prefill step")
@@ -722,13 +723,13 @@ if __name__ == "__main__":
                         help="serve the OpenAI endpoint even when --prompts is given")
     args = parser.parse_args()
     if args.prompts is None or args.serve:
-        # no prompt file: serve the hardcoded LLM (plus the ladder when given)
-        serveOpenAI(args.ladder, args.host, args.port)
+        # no prompt file: serve the given LLM (plus the ladder when given)
+        serveOpenAI(args.model, args.ladder, args.host, args.port)
     elif args.ladder is not None:
-        runLadderOnFile(args.prompts, args.ladder)
+        runLadderOnFile(args.prompts, args.ladder, args.model)
     elif args.inject_token is None:
         # without arg: save activations to <prompts>_activs.npz
-        saveActivations(args.prompts)
+        saveActivations(args.prompts, args.model)
     else:
-        injectTokenAct(args.prompts, args.inject_token)
+        injectTokenAct(args.prompts, args.inject_token, args.model)
 
