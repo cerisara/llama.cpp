@@ -38,7 +38,7 @@ MODELS = [
     ("/home/xtof/ggufs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", True),
     ("/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf", False),
 ]
-modnom, is_moe = MODELS[2]
+modnom, is_moe = MODELS[0]
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
