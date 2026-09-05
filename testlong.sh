@@ -11,7 +11,7 @@ rm -f tt_activs.npz
 
 cat q1_oracle.md > tt
 echo "" >> tt
-echo 'La capitale de la Belgique est' > tt
+echo 'La capitale de la Belgique est' >> tt
 NTOKS=5 python ./xllamacpp.py --prompts tt > repbad
 mv tt_activs.npz actbad.npz
 a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
@@ -19,7 +19,7 @@ a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
 # mais le cut suivant compte a partir de 1
  
 goldtok=$(cat repgld | grep PROMPT_TOKENS | cut -c16- | cut -d',' -f$a)
-echo "gold token $goldtok"
+echo "gold token $goldtok $a"
 python ./xllamacpp.py --prompts tt --inject_token $goldtok > repfix
 rm -f tt_activs.npz
 cat repfix | grep GEN
