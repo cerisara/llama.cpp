@@ -206,6 +206,7 @@ class SharedMem(threading.Thread):
         return protoks
  
     def rollout_gen(self, prompt, n_predict=NTOKS2GEN, stop=None, temperature=None):
+        # this method is used when running inference on a file
         url = "http://localhost:"+PORT+"/completions"
         data = {"prompt" : prompt, "return_tokens": True, "cache_prompt": False,
                 "n_predict": n_predict}
@@ -227,6 +228,7 @@ class SharedMem(threading.Thread):
         return None
 
     def raw_rollout(self, req, endpoint):
+        # this method is used when running inference as a server
         # post a client payload unchanged to one of llama-server's OpenAI endpoints
         # and return the raw (already OpenAI-formatted) response
         url = "http://localhost:"+PORT+endpoint
@@ -237,6 +239,7 @@ class SharedMem(threading.Thread):
         if str(response.status_code)[0] != "2": return None
 
     def raw_rollout_stream(self, req, endpoint):
+        # this method is used when running inference as a server, streaming mode
         # post a client payload unchanged to llama-server's OpenAI endpoint with
         # the stream flag on, and yield the raw SSE bytes as they arrive instead
         # of buffering the whole response. On any upstream failure it yields
@@ -261,25 +264,6 @@ class SharedMem(threading.Thread):
         finally:
             response.close()
 
-    def rollout_train(self, prompt):
-        # j'ai check que l'API embeddings retourne le meme vecteur d'embeddings que celui obtenu en dernier via l'API completions
-        url = "http://localhost:"+PORT+"/embeddings"
-        data = {"content" : prompt, "return_tokens": True, "cache_prompt": False}
-        headers = { "Content-Type": "application/json" }
-        print("sending prompt to llama.cpp embeddings")
-        response = requests.post(url, json=data, headers=headers)
-        sout = response.json()
-        print("Status code:", response.status_code)
-        print("Response body:", len(sout))
-        if str(response.status_code)[0]!="2": return None
-        # print("ddd",sout[0].keys())
-        # print("jjj",np.array(sout[0]['embedding']).shape)
-        # print("kkk",sout[0]['embedding'][-1][:10])
-        # reptoks = sout['tokens']
-        # rep = sout['content']
-        # return rep,reptoks
-        # return sout[0]['embedding']
-     
 class AsyncScriptRunner:
     def __init__(self, script_path, *args, env=None, notify_event=None):
         self.script_path = script_path
@@ -471,8 +455,7 @@ def saveActivations(prompts_file):
     print("Triggering rollouts to get activations...")
     for utt in prompts:
         print("Prompt:", utt)
-        if NTOKS2GEN==0: s=sharedRAM.rollout_train(utt)
-        else: s=sharedRAM.rollout_gen(utt)
+        s=sharedRAM.rollout_gen(utt)
         if not s==None:
             print("GEN",s[0])
             print("TOKGEN",s[1])
@@ -489,7 +472,7 @@ def saveActivations(prompts_file):
     handler.save()
 
 class LadderHandler:
-    # runs each pair of connected-layer activations (l_out-16 then norm) through
+    # runs each pair of connected-layer activations through
     # the MLP trained by train.py, and reinjects the transformed norm activation
     # back into llama.cpp. Reimplements the test-time forward of the MLP in numpy
     # (keys are row-normalized, cosines gated by the stored threshold) so we only
@@ -512,7 +495,7 @@ class LadderHandler:
     def processActivations(self, actbig, i, node_name=""):
         actbig = np.asarray(actbig, dtype=np.float32)
         if self.prev is None:
-            # first half of the input pair (l_out-16): just buffer it unchanged
+            # first layer: just buffer it unchanged
             self.prev = actbig.copy()
             return None
         # pair is [prev (l_out-16), current (norm)]; the MLP input is the 2*dim concat
@@ -523,8 +506,7 @@ class LadderHandler:
         sim = xn @ self.keys_w.T                       # (T, dhid)
         gate = np.maximum(sim - self.thr, 0.0)         # test-time thresholded ReLU
         bias = gate @ self.vals_w.T                    # (T, hdim)
-        if self.vals_b is not None:
-            bias = bias + self.vals_b
+        if self.vals_b is not None: bias = bias + self.vals_b
         # reinject: residual stream is the norm half of the input (== current actbig)
         out = actbig + bias
         self.n += 1
@@ -532,7 +514,7 @@ class LadderHandler:
         return out.astype(np.float32)
 
 
-def runLadder(prompts_file, mlpfile):
+def runLadderOnFile(prompts_file, mlpfile):
     handler = LadderHandler(mlpfile)
     sharedRAM, procCPP = initLlamacpp("./", handler)
 
@@ -744,7 +726,7 @@ if __name__ == "__main__":
         # no prompt file: serve the hardcoded LLM (plus the ladder when given)
         serveOpenAI(args.ladder, args.host, args.port)
     elif args.ladder is not None:
-        runLadder(args.prompts, args.ladder)
+        runLadderOnFile(args.prompts, args.ladder)
     elif args.inject_token is None:
         # without arg: save activations to <prompts>_activs.npz
         saveActivations(args.prompts)
