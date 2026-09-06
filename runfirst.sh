@@ -13,7 +13,7 @@ NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py --model "$mod" --prompts tt > saveemb
 rm -f tt_activs.npz
 python ./init_layers.py saveemb
 
-NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
+TOKNOD=$(cat toknod.txt) NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
 rm -f tt_activs.npz
 
 echo 'La capitale de la Belgique est' > tt

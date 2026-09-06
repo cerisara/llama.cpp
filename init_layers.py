@@ -7,17 +7,45 @@
 #     names (one per line) to the file "layers2save":
 #       * the layer output at about 60% of the network depth after layer 0
 #       * the final hidden state, i.e. the node just before the unembedding
+#   - writes to "toknod.txt" the input-embedding node name and the number of
+#     its source that holds the vocab dimension (node dims all < 100k but one
+#     source with a dim > 100k), for a callback to print the tokens index
 # Usage:
 #   python init_layers.py <log_file>
 
-# TODO: also find the node which dimensions are all < 100k but which has one of
-# his sources with one dim > 100k: this node computes the input embedding vector
-# and you must save the node name as well as its source number with dim >100k
-# so that I can later on print the tokens index with a special callback on this
-# source of this node
-
 import re
 import sys
+
+# a node with all its own dims < this but a source with one dim > this is the
+# input-embedding node (its weight holds the vocab dimension)
+TOKLIMIT = 100000
+
+
+def parse_dims(s):
+    # "896x2x1x1" -> [896, 2, 1, 1]
+    return [int(x) for x in s.split("x")]
+
+
+def _trim_dims(toks):
+    # toks are the space-separated tokens of one node or source; the trailing
+    # dims token matches NxNxNxN, anything before it (may be empty, or a name
+    # with a suffix like "(reshaped)") is the name
+    for i in range(len(toks) - 1, -1, -1):
+        if re.fullmatch(r"\d+x\d+x\d+x\d+", toks[i]):
+            return " ".join(toks[:i]), parse_dims(toks[i])
+    return " ".join(toks), []
+
+
+def parse_node_line(s):
+    # line after "[stderr] node: ":
+    #   "<name> <dims> <- <src0name> <src0dims> <- <src1name> <src1dims>"
+    # returns (name, dims, [(srcname, srcdims), ...])
+    parts = s.split(" <- ")
+    name, dims = _trim_dims(parts[0].split(" "))
+    srcs = []
+    for p in parts[1:]:
+        srcs.append(_trim_dims(p.split(" ")))
+    return name, dims, srcs
 
 
 def main():
@@ -27,22 +55,35 @@ def main():
 
     logfile = sys.argv[1]
 
-    # one node name per line, in graph order; the "saving embeddings" line is
+    # one node per line, in graph order; the "saving embeddings" line is
     # printed right after the node holding the unembedding matrix, so that node
     # (the final one to save) is the one just before it
-    nodes = []
+    nodes = []          # parsed (name, dims, srcs)
     node_final = None
-    with open(logfile, "r") as f:
+    tok_name = None     # input-embedding node
+    tok_src = None      # index of its source holding the vocab dimension
+    with open(logfile, "r", errors="replace") as f:
         for line in f:
             if line.startswith("[stderr] node: "):
-                nodes.append(line[len("[stderr] node: "):].strip())
+                name, dims, srcs = parse_node_line(line[len("[stderr] node: "):].strip())
+                nodes.append((name, dims, srcs))
+                # the input-embedding node: all its own dims < TOKLIMIT but one
+                # of its sources has a dim > TOKLIMIT (the vocab). remember the
+                # node name and the source number so a callback can later print
+                # the tokens index from that source
+                if tok_name is None and dims and all(d < TOKLIMIT for d in dims):
+                    for si, sdims in srcs:
+                        if any(d > TOKLIMIT for d in sdims):
+                            tok_name = name
+                            tok_src = si
+                            break
             elif "saving embeddings" in line and nodes:
-                node_final = nodes[-1]
+                node_final = nodes[-1][0]
 
     # layer-end nodes: keep each layer index, remember its node name
     # name pattern is "<prefix><index>" (e.g. "l_out-31")
     layer_nodes = {}
-    for name in nodes:
+    for name, _, _ in nodes:
         m = re.match(r"^(l[-_]out)-?(\d+)$", name)
         if m:
             layer_nodes[int(m.group(2))] = name
@@ -70,6 +111,17 @@ def main():
         f.write(node_final + "\n")
 
     print("wrote nodes to layers2save")
+
+    if tok_name is None:
+        print("no input-embedding node found in " + logfile)
+        sys.exit(1)
+
+    print("tok node: " + tok_name + " source " + str(tok_src))
+
+    with open("toknod.txt", "w") as f:
+        f.write(str(tok_src) + "\n")
+
+    print("wrote nodes to toknod.txt")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ s="Bonjour"
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
-python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
+TOKNOD= python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
 # python xllamacpp.py --model "$mod" --ladder mlp.pt > ladder.log &
 
 # wait until the OpenAI endpoint is up
