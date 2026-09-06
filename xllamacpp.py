@@ -640,6 +640,15 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
 
         def do_POST(self):
+            if self.path == "/shutdown":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Shutting down\n")
+
+                # shutdown() must not be called from the serving thread
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+
             if self.path not in ("/v1/chat/completions", "/v1/completions"):
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
                 return
