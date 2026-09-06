@@ -225,12 +225,35 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
 
 	if (!done_first_node) {
 		if (firstnodeseen == NULL) {
-			fprintf(stderr,"node: %s\n",t->name);
+			// first node ever: keep it to know when we have made a full forward
+			fprintf(stderr,"node: %s %lldx%lldx%lldx%lld",t->name,
+				(long long) t->ne[0],(long long) t->ne[1],(long long) t->ne[2],(long long) t->ne[3]);
+			if (t->src[0] != NULL) {
+				fprintf(stderr," <- %s %lldx%lldx%lldx%lld", t->src[0]->name,
+					(long long) t->src[0]->ne[0],(long long) t->src[0]->ne[1],(long long) t->src[0]->ne[2],(long long) t->src[0]->ne[3]);
+			}
+			if (t->src[1] != NULL) {
+				fprintf(stderr," <- %s %lldx%lldx%lldx%lld", t->src[1]->name,
+					(long long) t->src[1]->ne[0],(long long) t->src[1]->ne[1],(long long) t->src[1]->ne[2],(long long) t->src[1]->ne[3]);
+			}
+			fprintf(stderr,"\n");
 			firstnodeseen = (char *) t->name;
 		} else if (strcmp(firstnodeseen, t->name) == 0) {
+			// start of second pass: don't print anything more
 			done_first_node = 1;
 		} else {
-			fprintf(stderr,"node: %s\n",t->name);
+			// we're in the first forward
+			fprintf(stderr,"node: %s %lldx%lldx%lldx%lld",t->name,
+				(long long) t->ne[0],(long long) t->ne[1],(long long) t->ne[2],(long long) t->ne[3]);
+			if (t->src[0] != NULL) {
+				fprintf(stderr," <- %s %lldx%lldx%lldx%lld", t->src[0]->name,
+					(long long) t->src[0]->ne[0],(long long) t->src[0]->ne[1],(long long) t->src[0]->ne[2],(long long) t->src[0]->ne[3]);
+			}
+			if (t->src[1] != NULL) {
+				fprintf(stderr," <- %s %lldx%lldx%lldx%lld", t->src[1]->name,
+					(long long) t->src[1]->ne[0],(long long) t->src[1]->ne[1],(long long) t->src[1]->ne[2],(long long) t->src[1]->ne[3]);
+			}
+			fprintf(stderr,"\n");
 		}
 	}
     for (int i=0;i<1000;i++) {

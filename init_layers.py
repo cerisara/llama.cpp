@@ -10,6 +10,12 @@
 # Usage:
 #   python init_layers.py <log_file>
 
+# TODO: also find the node which dimensions are all < 100k but which has one of
+# his sources with one dim > 100k: this node computes the input embedding vector
+# and you must save the node name as well as its source number with dim >100k
+# so that I can later on print the tokens index with a special callback on this
+# source of this node
+
 import re
 import sys
 

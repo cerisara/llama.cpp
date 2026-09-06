@@ -2,7 +2,7 @@
 # sets-up every file required and runs a safe check
 # also, don't forget to cmake llama-server first!
 
-source ~/envs/transformers/bin/activate
+# source ~/envs/transformers/bin/activate
 
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
