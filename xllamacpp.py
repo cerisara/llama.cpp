@@ -7,6 +7,12 @@
 # Environment variables to control the program:
 # SAVE_EMB=result_output to save the embeddings
 
+# (txt)  --> xllamacpp --> llama-server API --> (chatML) --> LLM --> (activations) --> xllamacpp --> python_handler
+# pi --> (json) --> xllamacpp --> llama-server API --> (chatML) --> LLM --> (activations) --> xllamacpp --> python_handler
+# llama-server /v1/completions: does not apply chat-template! but still adds bos/eos?
+# llama-server /v1/chat/completions: expects JSON, then apply chat-template and generates
+# llama-server /apply-template: expects JSON, then apply chat-template and output
+
 import os
 import sys
 import mmap
@@ -29,8 +35,10 @@ SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
 
-with open("layers2save") as f:
-    nlayers = sum(1 for line in f if line.strip())
+try:
+    with open("layers2save") as f:
+        nlayers = sum(1 for line in f if line.strip())
+except: nlayers=0
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
@@ -219,6 +227,8 @@ class SharedMem(threading.Thread):
         sout = response.json()
         print("Status code:", response.status_code)
         print("Response body:", len(sout))
+        for k in sout.keys():
+            print("RESP",k,sout[k])
         if str(response.status_code)[0]=="2" and sout!=None: return sout['content'], sout['tokens']
         return None
 
