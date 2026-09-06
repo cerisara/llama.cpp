@@ -29,8 +29,10 @@ SHM_NAME = "/ring_buffer_demo"
 SEM_C2P = "/c2py_sem"
 SEM_P2C = "/py2c_sem"
 
-with open("layers2save") as f:
-    nlayers = sum(1 for line in f if line.strip())
+try:
+    with open("layers2save") as f:
+        nlayers = sum(1 for line in f if line.strip())
+except: nlayers = 0
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
