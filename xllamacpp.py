@@ -602,10 +602,27 @@ class NoopHandler:
     def processActivations(self, actbig, i, node_name=""):
         return None
 
-def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
+class SaveActivsHandler:
+    # wraps any handler and additionally streams every activation to disk in the
+    # same on-disk format as ActivsSaver, so serving also produces an activations file
+    def __init__(self, inner, outfile):
+        self.inner = inner
+        self.saver = ActivsSaver(outfile)
+
+    def processActivations(self, actbig, i, node_name=""):
+        if actbig.shape[0] > 0:
+            self.saver.save_one(actbig, node_name)
+        return self.inner.processActivations(actbig, i, node_name)
+
+    def close(self):
+        self.saver.close()
+
+def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_outfile=None):
     # serve a local minimal OpenAI-compatible endpoint on the given LLM,
-    # modified by the ladder MLP when one is given
-    handler = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
+    # modified by the ladder MLP when one is given; when activs_outfile is set,
+    # every activation is also saved to disk just like saveActivations does
+    base = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
+    handler = SaveActivsHandler(base, activs_outfile) if activs_outfile else base
     sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
 
     import json
@@ -644,7 +661,6 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"Shutting down\n")
-
                 # shutdown() must not be called from the serving thread
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -652,6 +668,7 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
             if self.path not in ("/v1/chat/completions", "/v1/completions"):
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
                 return
+
             req = self._req()
             # print("DEBUG full prompt",str(req))
             with serial:
@@ -662,8 +679,10 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
                 # rollout, because the shared-memory hook fires on the Llama forward
                 # pass regardless of which llama-server endpoint serves the request.
                 if 'messages' in req:
+                    print("XLLAMASERVERCHAT",req['messages'])
                     endpoint = "/v1/chat/completions"
                 elif 'prompt' in req:
+                    print("XLLAMASERVERCOMPL",req['prompt'])
                     endpoint = "/v1/completions"
                 else:
                     self._send(500, {"error": {"message": "invalid payload: no 'messages' or 'prompt'",
@@ -711,6 +730,8 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258):
         print("Stopping llama.cpp process...")
         procCPP.stop()
         sharedRAM.join()
+        if isinstance(handler, SaveActivsHandler):
+            handler.close()
 
 if __name__ == "__main__":
     import argparse
@@ -732,10 +753,13 @@ if __name__ == "__main__":
                         help="port of the OpenAI endpoint")
     parser.add_argument("--serve", action="store_true",
                         help="serve the OpenAI endpoint even when --prompts is given")
+    parser.add_argument("--activs", type=str, default=None,
+                        help="while serving, save the latents to this file "
+                             "(same on-disk format as saveActivations)")
     args = parser.parse_args()
     if args.prompts is None or args.serve:
         # no prompt file: serve the given LLM (plus the ladder when given)
-        serveOpenAI(args.model, args.ladder, args.host, args.port)
+        serveOpenAI(args.model, args.ladder, args.host, args.port, activs_outfile=args.activs)
     elif args.ladder is not None:
         runLadderOnFile(args.prompts, args.ladder, args.model)
     elif args.inject_token is None:
