@@ -224,6 +224,18 @@ class SharedMem(threading.Thread):
         if str(response.status_code)[0]=="2" and sout!=None: return sout['content'], sout['tokens']
         return None
 
+    def apply_template(self, req):
+        # convert a chat-completions payload into the raw chatml prompt string
+        # via llama-server's /apply-template endpoint
+        url = "http://localhost:"+PORT+"/apply-template"
+        headers = { "Content-Type": "application/json" }
+        print("converting chat payload to chatml via /apply-template")
+        response = requests.post(url, json=req, headers=headers)
+        if str(response.status_code)[0] != "2":
+            print("WARNING: /apply-template returned status "+str(response.status_code))
+            return None
+        return response.json()['prompt']
+
     def raw_rollout(self, req, endpoint):
         # this method is used when running inference as a server
         # post a client payload unchanged to one of llama-server's OpenAI endpoints
@@ -234,6 +246,7 @@ class SharedMem(threading.Thread):
         response = requests.post(url, json=req, headers=headers)
         print("Status code:", response.status_code)
         if str(response.status_code)[0] != "2": return None
+        return response.json()
 
     def raw_rollout_stream(self, req, endpoint):
         # this method is used when running inference as a server, streaming mode
@@ -617,7 +630,23 @@ class SaveActivsHandler:
     def close(self):
         self.saver.close()
 
-def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_outfile=None):
+def _to_completions(req, prompt):
+    # translate a chat-completions payload into an equivalent /completions
+    # payload, using the /apply-template prompt as the input
+    out = {"prompt": prompt}
+    for src, dst in (("max_tokens", "n_predict"),
+                     ("temperature", "temperature"),
+                     ("top_p", "top_p"),
+                     ("top_k", "top_k"),
+                     ("stop", "stop"),
+                     ("seed", "seed"),
+                     ("stream", "stream")):
+        if src in req:
+            out[dst] = req[src]
+    return out
+
+
+def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_outfile=None, dochatml=False):
     # serve a local minimal OpenAI-compatible endpoint on the given LLM,
     # modified by the ladder MLP when one is given; when activs_outfile is set,
     # every activation is also saved to disk just like saveActivations does
@@ -678,9 +707,21 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                 # The ladder MLP still transforms every activation during the
                 # rollout, because the shared-memory hook fires on the Llama forward
                 # pass regardless of which llama-server endpoint serves the request.
+                payload = req
                 if 'messages' in req:
                     print("XLLAMASERVERCHAT",req['messages'])
-                    endpoint = "/v1/chat/completions"
+                    if dochatml:
+                        # apply the chat template here, then hand the raw chatml
+                        # to /completions so the response is a plain-text completion
+                        prompt = sharedRAM.apply_template(req)
+                        if prompt is None:
+                            self._send(500, {"error": {"message": "apply-template failed",
+                                                       "type": "server_error"}})
+                            return
+                        payload = _to_completions(req, prompt)
+                        endpoint = "/v1/completions"
+                    else:
+                        endpoint = "/v1/chat/completions"
                 elif 'prompt' in req:
                     print("XLLAMASERVERCOMPL",req['prompt'])
                     endpoint = "/v1/completions"
@@ -688,7 +729,7 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                     self._send(500, {"error": {"message": "invalid payload: no 'messages' or 'prompt'",
                                                "type": "invalid_request_error"}})
                     return
-                if req.get("stream", False):
+                if payload.get("stream", False):
                     # llama-server replies in SSE, token by token; relay the
                     # stream to the client progressively instead of buffering
                     # the whole response (which would mis-parse as JSON below)
@@ -697,7 +738,7 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                     self.send_header("Cache-Control", "no-cache")
                     self.end_headers()
                     got_chunk = False
-                    for chunk in sharedRAM.raw_rollout_stream(req, endpoint):
+                    for chunk in sharedRAM.raw_rollout_stream(payload, endpoint):
                         got_chunk = True
                         self.wfile.write(chunk)
                         self.wfile.flush()
@@ -712,7 +753,7 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                     # unambiguously sees the end of the stream after [DONE]
                     self.close_connection = True
                     return
-                res = sharedRAM.raw_rollout(req, endpoint)
+                res = sharedRAM.raw_rollout(payload, endpoint)
                 if res is None:
                     self._send(500, {"error": {"message": "llama.cpp rollout failed", "type": "server_error"}})
                     return
@@ -756,10 +797,15 @@ if __name__ == "__main__":
     parser.add_argument("--activs", type=str, default=None,
                         help="while serving, save the latents to this file "
                              "(same on-disk format as saveActivations)")
+    parser.add_argument("--dochatml", action="store_true",
+                        help="when serving chat completions, apply the model's chat "
+                             "template via /apply-template and send the result to "
+                             "/completions instead of /v1/chat/completions")
     args = parser.parse_args()
     if args.prompts is None or args.serve:
         # no prompt file: serve the given LLM (plus the ladder when given)
-        serveOpenAI(args.model, args.ladder, args.host, args.port, activs_outfile=args.activs)
+        serveOpenAI(args.model, args.ladder, args.host, args.port, activs_outfile=args.activs,
+                    dochatml=args.dochatml)
     elif args.ladder is not None:
         runLadderOnFile(args.prompts, args.ladder, args.model)
     elif args.inject_token is None:
