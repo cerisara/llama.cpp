@@ -269,14 +269,12 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
 				toksrc = src1;
 			}
 			if (toksrc != NULL) {
-				fprintf(stderr, "TTTTTTTTTTTNNNNNNNNNNNN %s\n", toksrc);
 				std::vector<uint8_t> tok_data;
 				uint8_t * tokptr;
 				const bool tok_is_host = ggml_backend_buffer_is_host(toksrc->buffer);
 				if (!tok_is_host) {
 					auto n_bytes = ggml_nbytes(toksrc);
 					tok_data.resize(n_bytes);
-					// TODO: bugfix: it crashes with "[detson_send_tensor] error: unsupported tensor type q5_1"
 					ggml_backend_tensor_get(toksrc, tok_data.data(), 0, n_bytes);
 					tokptr = tok_data.data();
 				} else {

@@ -72,10 +72,10 @@ def main():
                 # node name and the source number so a callback can later print
                 # the tokens index from that source
                 if tok_name is None and dims and all(d < TOKLIMIT for d in dims):
-                    for si, sdims in srcs:
+                    for si, (_, sdims) in enumerate(srcs):
                         if any(d > TOKLIMIT for d in sdims):
                             tok_name = name
-                            tok_src = si
+                            tok_src = srcs[1-si][0]
                             break
             elif "saving embeddings" in line and nodes:
                 node_final = nodes[-1][0]
