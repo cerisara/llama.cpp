@@ -31,3 +31,5 @@ python ./xllamacpp.py --model "$mod" --prompts tt --inject_token $goldtok > repf
 rm -f tt_activs.npz
 cat repfix | grep GEN
 
+# the next test you may want to run is ./runserver.sh
+

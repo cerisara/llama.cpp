@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# WARNING: you must run first ./runfirst.sh
+# The following test xllamacpp in OAI server mode through pi harness
+
 s="Bonjour"
 
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
-TOKNOD= python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
+TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
 # python xllamacpp.py --model "$mod" --ladder mlp.pt > ladder.log &
 
 # wait until the OpenAI endpoint is up
