@@ -47,6 +47,7 @@ sem_t* sem_py2c;
 
 char **detsavelayer = (char **)malloc(sizeof(char *)*1000);
 char *detsaveemb = NULL; // when set (from SAVE_EMB), save embeddings then stop
+char *toknod = NULL; // when set (from TOKNOD), also send a matching src input's activations
 int detembsaved = 0; // once saved, do not save it again
 char * firstnodeseen = NULL; // first node name seen by the eval callback
 int done_first_node = 0; // stop printing node names once the sequence is known
@@ -256,11 +257,35 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
 			fprintf(stderr,"\n");
 		}
 	}
-    for (int i=0;i<1000;i++) {
-        if (detsavelayer[i]==NULL) break;
+	for (int i=0;i<1000;i++) {
+		if (detsavelayer[i]==NULL) break;
 
-        if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
+		// if TOKNOD is set and one of the inputs matches it, also share that input's activations first
+		if (toknod != NULL) {
+			const struct ggml_tensor * toksrc = NULL;
+			if (src0 != NULL && strlen(src0->name)==strlen(toknod) && !strncmp(src0->name, toknod, strlen(toknod))) {
+				toksrc = src0;
+			} else if (src1 != NULL && strlen(src1->name)==strlen(toknod) && !strncmp(src1->name, toknod, strlen(toknod))) {
+				toksrc = src1;
+			}
+			if (toksrc != NULL) {
+				std::vector<uint8_t> tok_data;
+				uint8_t * tokptr;
+				const bool tok_is_host = ggml_backend_buffer_is_host(toksrc->buffer);
+				if (!tok_is_host) {
+					auto n_bytes = ggml_nbytes(toksrc);
+					tok_data.resize(n_bytes);
+					ggml_backend_tensor_get(toksrc, tok_data.data(), 0, n_bytes);
+					tokptr = tok_data.data();
+				} else {
+					tokptr = (uint8_t *) toksrc->data;
+				}
+				detson_send_tensor(toksrc->name, tokptr, toksrc->type, toksrc->ne, toksrc->nb);
+			}
+		}
+		if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
 			fprintf(stderr,"detsoncpp detected layer2send\n");
+
                 uint8_t * data = is_host ? (uint8_t *) t->data : cb_data->data.data();
                 detson_send_tensor(t->name, data, t->type, t->ne, t->nb);
 
@@ -472,6 +497,11 @@ int llama_server(common_params & params, int argc, char ** argv) {
         callback_data cb_data;
 		const char *detsaveemb_env = getenv("SAVE_EMB");
 		if (detsaveemb_env!=NULL) detsaveemb=strdup(detsaveemb_env); // SAVE_EMB only enables saving; the unembedding node is found by its dims
+		const char *toknod_env = getenv("TOKNOD");
+		if (toknod_env!=NULL) {
+			toknod=strdup(toknod_env); // TOKNOD names a src input to also share
+			fprintf(stderr, "TOKNOD %s\n", toknod);
+		}
 		if (detsaveemb==NULL) {
             LOG_WRN("detson will share activations\n");
             params.cb_eval = detsoncb_share_activs;

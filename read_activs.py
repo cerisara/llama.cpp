@@ -1,7 +1,7 @@
 # Reads back the activation file written by ActivsSaver in xllamacpp.py
 # Usage:
 #   python read_activs.py <file>                 # summary of all chunks
-#   python read_activs.py <file> <index> [<dim>]  # show first 5 values of the given tensor
+#   python read_activs.py <file> <idx2save> [<dim>]  # show first 5 values of the given tensor
 #                 <dim>: slice along first dim; defaults to the last vector
 #   python read_activs.py <file> --save out.npz  # dump all chunks to a .npz file
 
@@ -38,13 +38,17 @@ def main():
         sys.exit(1)
 
     infile = sys.argv[1]
-    index = None
+    idx2save = None
     dim = None
     outfile = None
+    vec = None
     args = sys.argv[2:]
     while args:
         if args[0] == "--save":
             outfile = args[1]
+            args = args[2:]
+        elif args[0] == "--vec":
+            vec = int(args[1])
             args = args[2:]
         else:
             # positional args: tensor index, then first-dim slice
@@ -67,20 +71,30 @@ def main():
         np.savez_compressed(outfile, *activs)
         print("dumped all chunks to " + outfile)
 
-    if index is not None:
-        if index < 0 or index >= len(activs):
-            print("index " + str(index) + " out of range")
+    if vec is not None:
+        if vec < 0 or vec >= len(activs):
+            print("index " + str(vec) + " out of range")
             sys.exit(1)
-        arr = activs[index]
+        arr = activs[vec]
+        node = names[vec] if vec < len(names) else ""
+        print("tensor " + str(vec) + ": " + node + " shape=" + str(arr.shape))
+        print("VEC"," ".join([str(x) for x in arr.flatten()]))
+        return
+
+    if idx2save is not None:
+        if idx2save < 0 or idx2save >= len(activs):
+            print("idx2save " + str(idx2save) + " out of range")
+            sys.exit(1)
+        arr = activs[idx2save]
         if arr.size == 0:
-            print("tensor " + str(index) + " shape=" + str(arr.shape) + " is empty, skipping")
+            print("tensor " + str(idx2save) + " shape=" + str(arr.shape) + " is empty, skipping")
             return
         default_dim = arr.shape[0] - 1
         d = dim if dim is not None else default_dim
         if d < 0 or d >= arr.shape[0]:
             print("dim " + str(d) + " out of range (0.." + str(arr.shape[0] - 1) + ")")
             sys.exit(1)
-        print("tensor " + str(index) + " shape=" + str(arr.shape) + " dim=" + str(d))
+        print("tensor " + str(idx2save) + " shape=" + str(arr.shape) + " dim=" + str(d))
         arr = arr[d]
         arr.tofile("onevec.bin")
         print("saved vector to onevec.bin")

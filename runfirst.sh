@@ -9,23 +9,27 @@ mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
 rm -f detembeds.*
-NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py --model "$mod" --prompts tt > saveemb
 rm -f tt_activs.npz
+NTOKS=1 SAVE_EMB=1 python ./xllamacpp.py --model "$mod" --prompts tt > saveemb
 python ./init_layers.py saveemb
 
-NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
 rm -f tt_activs.npz
+TOKNOD=$(cat toknod.txt) NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
+# first vec is the tokens
+python read_activs.py tt_activs.npz --vec 0 | grep VEC > toksgld
+mv tt_activs.npz actgld.npz
 
 echo 'La capitale de la Belgique est' > tt
-NTOKS=5 python ./xllamacpp.py --model "$mod" --prompts tt > repbad
+TOKNOD=$(cat toknod.txt) NTOKS=5 python ./xllamacpp.py --model "$mod" --prompts tt > repbad
+ntoks=$(python read_activs.py tt_activs.npz --vec 0 | grep VEC | wc -w)
+ntoksq=$((ntoks + 1))
+echo "ntoks question $ntoksq"
 mv tt_activs.npz actbad.npz
-a=$(cat repbad | grep PROMPT_TOKENS | wc -w)
-# contient le nb de tokens+1; l'index du token genere suivant = nb de tokens
-# mais le cut suivant compte a partir de 1
- 
-goldtok=$(cat repgld | grep PROMPT_TOKENS | cut -c16- | cut -d',' -f$a)
+goldtok=$(cat toksgld | cut -d' ' -f$ntoksq)
 echo "gold token $goldtok"
 python ./xllamacpp.py --model "$mod" --prompts tt --inject_token $goldtok > repfix
 rm -f tt_activs.npz
 cat repfix | grep GEN
+
+# the next test you may want to run is ./runserver.sh
 
