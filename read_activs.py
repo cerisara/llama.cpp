@@ -42,6 +42,7 @@ def main():
     dim = None
     outfile = None
     vec = None
+    toks = False
     args = sys.argv[2:]
     while args:
         if args[0] == "--save":
@@ -50,11 +51,14 @@ def main():
         elif args[0] == "--vec":
             vec = int(args[1])
             args = args[2:]
+        elif args[0] == "--tokens":
+            toks = True
+            args = args[2:]
         else:
             # positional args: tensor index, then first-dim slice
             try:
-                if index is None:
-                    index = int(args[0])
+                if idx2save is None:
+                    idx2save = int(args[0])
                 elif dim is None:
                     dim = int(args[0])
                 else:
@@ -70,6 +74,17 @@ def main():
     if outfile is not None:
         np.savez_compressed(outfile, *activs)
         print("dumped all chunks to " + outfile)
+
+    if toks:
+        # assume the first node is a token node
+        # token nodes are shape (1, n_tokens): flatten to read the ids
+        tokens = []
+        for v in range(len(names)):
+            node = names[v]
+            if node == names[0]:
+                tokens.extend([int(i) for i in activs[v].flatten()])
+        print("TOKENS", " ".join([str(t) for t in tokens]))
+        return
 
     if vec is not None:
         if vec < 0 or vec >= len(activs):

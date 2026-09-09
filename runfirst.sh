@@ -16,16 +16,13 @@ python ./init_layers.py saveemb
 
 rm -f tt_activs.npz
 TOKNOD=$(cat toknod.txt) NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
-# TODO: why is the TOKNOD vec saved twice in tt_activs.npz?
-# first vec is the tokens
-# TODO: bug: it may be that the prompt is split into chunks, si I must sum over all toknod lines
-python read_activs.py tt_activs.npz --vec 0 | grep VEC > toksgld
+python read_activs.py tt_activs.npz --tokens | grep TOKENS > toksgld
 mv tt_activs.npz actgld.npz
 
 echo 'La capitale de la Belgique est' > tt
 TOKNOD=$(cat toknod.txt) NTOKS=5 python ./xllamacpp.py --model "$mod" --prompts tt > repbad
-ntoks=$(python read_activs.py tt_activs.npz --vec 0 | grep VEC | wc -w)
-ntoksq=$((ntoks + 1))
+ntoks=$(python read_activs.py tt_activs.npz --tokens | grep TOKENS | wc -w)
+ntoksq=$((ntoks - 3))
 echo "ntoks question $ntoksq"
 mv tt_activs.npz actbad.npz
 goldtok=$(cat toksgld | cut -d' ' -f$ntoksq)
