@@ -6,6 +6,7 @@
 s="Bonjour"
 
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
 TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
