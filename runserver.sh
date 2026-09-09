@@ -18,7 +18,7 @@ done
 echo "xllamacpp OAI endpoint found"
 
 echo "$s" > tt
-pi -e ./ladder-model.ts --provider ladder --model laddermodel --stream all < tt 2>&1 | tee hh.log  
+pi -e ./ladder-model.ts --provider ladder --model laddermodel < tt 2>&1 | tee hh.log  
 
 echo "fini"
 curl -X POST http://127.0.0.1:8258/shutdown
