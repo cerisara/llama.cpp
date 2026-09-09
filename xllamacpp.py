@@ -221,8 +221,9 @@ class SharedMem(threading.Thread):
         print("sending prompt to llama.cpp completions")
         # print the token ids of the prompt, as the completions response only
         # returns the generated tokens
-        ptoks = self.tokenize(prompt)
-        print("PROMPT_TOKENS", ptoks)
+        # don't need to do that anymore as the tokens are saved from the first node?
+        # ptoks = self.tokenize(prompt)
+        # print("PROMPT_TOKENS", ptoks)
         response = requests.post(url, json=data, headers=headers)
         sout = response.json()
         print("Status code:", response.status_code)
@@ -748,9 +749,10 @@ if __name__ == "__main__":
                         help="file with the prompt; omit to serve a local OpenAI endpoint")
     parser.add_argument("--model", type=str, required=True,
                         help="path to the .gguf model file")
-    parser.add_argument("--inject_token", type=int, default=None,
+    parser.add_argument("--inject_token", type=float, default=None,
                         help="load detembeds.bin and inject the embedding of this "
-                             "token into the last layer at the prefill step")
+                             "token into the last layer at the prefill step; a float "
+                             "is truncated to an int")
     parser.add_argument("--ladder", type=str, default=None,
                         help="file with the MLP trained by train.py (e.g. mlp.pt); "
                              "transform each non-dummy activation through it and "
@@ -774,5 +776,5 @@ if __name__ == "__main__":
         # without arg: save activations to <prompts>_activs.npz
         saveActivations(args.prompts, args.model)
     else:
-        injectTokenAct(args.prompts, args.inject_token, args.model)
+        injectTokenAct(args.prompts, int(args.inject_token), args.model)
 
