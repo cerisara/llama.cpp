@@ -5,6 +5,7 @@
 # source ~/envs/transformers/bin/activate
 
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
 
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt
@@ -15,7 +16,9 @@ python ./init_layers.py saveemb
 
 rm -f tt_activs.npz
 TOKNOD=$(cat toknod.txt) NTOKS=1 python ./xllamacpp.py --model "$mod" --prompts tt > repgld
+# TODO: why is the TOKNOD vec saved twice in tt_activs.npz?
 # first vec is the tokens
+# TODO: bug: it may be that the prompt is split into chunks, si I must sum over all toknod lines
 python read_activs.py tt_activs.npz --vec 0 | grep VEC > toksgld
 mv tt_activs.npz actgld.npz
 

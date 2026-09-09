@@ -281,6 +281,7 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
 					tokptr = (uint8_t *) toksrc->data;
 				}
 				detson_send_tensor(toksrc->name, tokptr, toksrc->type, toksrc->ne, toksrc->nb);
+				break;
 			}
 		}
 		if (strlen(detsavelayer[i])==strlen(t->name) && !strncmp(t->name,detsavelayer[i],strlen(detsavelayer[i]))) {
