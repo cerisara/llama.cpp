@@ -5,8 +5,8 @@
 
 s="Bonjour"
 
-mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
+mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
 TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
@@ -20,6 +20,8 @@ echo "xllamacpp OAI endpoint found"
 
 echo "$s" > tt
 pi -e ./ladder-model.ts --provider ladder --model laddermodel < tt 2>&1 | tee hh.log  
+
+# TODO print the real tokens consumed by the LLM
 
 echo "fini"
 curl -X POST http://127.0.0.1:8258/shutdown
