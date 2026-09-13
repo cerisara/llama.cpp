@@ -24,24 +24,10 @@ pi -e ./ladder-model.ts --provider ladder --model laddermodel < tt 2>&1 | tee hh
 
 # print the real tokens consumed by the LLM: extract the token ids from
 # the activation file, then detokenize them via the server /detokenize endpoint
+# and split them into chatML chunks (one realtokens.chunks line per chunk)
 TOKLIST=$(python read_activs.py cats.npz --tokens | grep '^TOKENS' | sed 's/^TOKENS //' | tr -s ' ')
 echo "tokens consumed by the LLM:"
-python - "$TOKLIST" <<'EOF'
-import json, sys, urllib.request
-
-toks = [int(x) for x in sys.argv[1].split()]
-print("DETOKEN", toks)
-req = urllib.request.Request(
-    "http://127.0.0.1:8257/detokenize",
-    data=json.dumps({"tokens": toks}).encode(),
-    headers={"Content-Type": "application/json"},
-)
-with urllib.request.urlopen(req) as r:
-    ss = json.load(r)["content"]
-    print("REAL_TOKENS", ss)
-    with open("realtokens.txt","w") as f:
-        f.write(ss)
-EOF
+python realtokens.py "$TOKLIST"
 
 echo "fini"
 curl -X POST http://127.0.0.1:8258/shutdown
