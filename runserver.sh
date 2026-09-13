@@ -9,6 +9,7 @@ mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
+rm -f cats.npz
 TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
 # python xllamacpp.py --model "$mod" --ladder mlp.pt > ladder.log &
 
@@ -21,7 +22,26 @@ echo "xllamacpp OAI endpoint found"
 echo "$s" > tt
 pi -e ./ladder-model.ts --provider ladder --model laddermodel < tt 2>&1 | tee hh.log  
 
-# TODO print the real tokens consumed by the LLM
+# print the real tokens consumed by the LLM: extract the token ids from
+# the activation file, then detokenize them via the server /detokenize endpoint
+TOKLIST=$(python read_activs.py cats.npz --tokens | grep '^TOKENS' | sed 's/^TOKENS //' | tr -s ' ')
+echo "tokens consumed by the LLM:"
+python - "$TOKLIST" <<'EOF'
+import json, sys, urllib.request
+
+toks = [int(x) for x in sys.argv[1].split()]
+print("DETOKEN", toks)
+req = urllib.request.Request(
+    "http://127.0.0.1:8257/detokenize",
+    data=json.dumps({"tokens": toks}).encode(),
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(req) as r:
+    ss = json.load(r)["content"]
+    print("REAL_TOKENS", ss)
+    with open("realtokens.txt","w") as f:
+        f.write(ss)
+EOF
 
 echo "fini"
 curl -X POST http://127.0.0.1:8258/shutdown
