@@ -13,3 +13,14 @@ chatML. To do that, insert the chatML tags:
 at the correct place
 
 Malformed prompt:
+
+---
+
+Le prompt ci-dessus ne marche pas bien avec Qwen, presque parfait avec DSv4,
+mais le plus simple est de:
+
+- resoudre la question avec DSv4 -> trace1
+- puis demander DSv4 de donner en qqs lignes les etapes, sans les requetes precises -> help1
+- puis resoudre la question + help1 avec Qwen et sauver le vrai prompt -> chatml1
+- puis train Qwen avec juste la question (sans help1) == Online distillation sur chatml1
+
