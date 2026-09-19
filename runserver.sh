@@ -3,10 +3,10 @@
 # WARNING: you must run first ./runfirst.sh
 # The following test xllamacpp in OAI server mode through pi harness
 
-s="Bonjour"
+s="Compter le nombre de fichiers dans les 2 sous-repertoires les plus recents"
 
-mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
 mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
 rm -f cats.npz
