@@ -239,10 +239,16 @@ class SharedMem(threading.Thread):
         # and return the raw (already OpenAI-formatted) response
         url = "http://localhost:"+PORT+endpoint
         headers = { "Content-Type": "application/json" }
-        print("sending raw payload to llama-server", endpoint)
+        print("sending raw payload to llama-server", endpoint, flush=True)
         response = requests.post(url, json=req, headers=headers)
-        print("Status code:", response.status_code)
-        if str(response.status_code)[0] != "2": return None
+        print("Status code:", response.status_code, flush=True)
+        if str(response.status_code)[0] != "2":
+            # capture llama-server's actual error so it's not swallowed by the
+            # generic "llama.cpp rollout failed" 500 we relay to the client
+            print("UPSTREAM ERROR BODY:", response.text[:2000], flush=True)
+            return None
+        # return the OpenAI-formatted response so the handler can relay it as 200
+        return response.json()
 
     def raw_rollout_stream(self, req, endpoint):
         # this method is used when running inference as a server, streaming mode
