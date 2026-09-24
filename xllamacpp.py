@@ -662,6 +662,21 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                 self._send(200, {"object": "list",
                                  "data": [{"id": model_name, "object": "model",
                                            "created": int(time.time()), "owned_by": "xllamacpp"}]})
+            elif self.path == "/tokenizer_info":
+                # Remote-tokenizer endpoint: let the lm-evaluation-harness use
+                # llama.cpp's own tokenizer instead of importing transformers.
+                try:
+                    r = requests.get("http://localhost:"+PORT+"/props",
+                                     headers={"Content-Type": "application/json"}, timeout=30)
+                    p = r.json()
+                    self._send(200, {
+                        "eos_token": p.get("eos_token"),
+                        "bos_token": p.get("bos_token"),
+                        "pad_token": p.get("pad_token") or p.get("bos_token"),
+                        "chat_template": p.get("chat_template"),
+                    })
+                except Exception as e:
+                    self._send(500, {"error": {"message": "tokenizer_info failed: "+str(e)}})
             else:
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
 
@@ -672,6 +687,26 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                 self.wfile.write(b"Shutting down\n")
                 # shutdown() must not be called from the serving thread
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+
+            if self.path == "/tokenize":
+                req = self._req()
+                content = req.get("prompt", req.get("content", ""))
+                add = bool(req.get("add_special_tokens", False))
+                r = requests.post("http://localhost:"+PORT+"/tokenize",
+                                  json={"content": content, "add_special": add,
+                                        "parse_special": False},
+                                  headers={"Content-Type": "application/json"}, timeout=30)
+                self._send(200, {"tokens": r.json().get("tokens", [])})
+                return
+
+            if self.path == "/detokenize":
+                req = self._req()
+                toks = req.get("tokens", [])
+                r = requests.post("http://localhost:"+PORT+"/detokenize",
+                                  json={"tokens": toks},
+                                  headers={"Content-Type": "application/json"}, timeout=30)
+                self._send(200, {"prompt": r.json().get("content", "")})
                 return
 
             if self.path not in ("/v1/chat/completions", "/v1/completions"):
