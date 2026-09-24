@@ -1,4 +1,4 @@
-import ast
+import argparse
 import sys
 
 import numpy as np
@@ -7,6 +7,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from read_activs import load_activs
+
+parser = argparse.ArgumentParser(description="Train the residual MLP (read_activs file only).")
+parser.add_argument("activs_file", help="path to the activations file (tokens + 2 layer vectors)")
+parser.add_argument("--dims", default="detembeds.dims",
+                    help="dims file for the unembedding matrix (default detembeds.dims)")
+parser.add_argument("--embeds", default="detembeds.bin",
+                    help="raw unembedding matrix (default detembeds.bin)")
+parser.add_argument("--nepochs", type=int, default=100,
+                    help="total number of training epochs (default 100)")
+args = parser.parse_args()
 
 device = torch.device("cpu")
 if torch.cuda.is_available():
@@ -20,50 +30,61 @@ if torch.cuda.is_available():
         print("GPU check failed, falling back to CPU:", e)
 print("using device:", device)
 
-toks = None
-with open("q1.log", "r") as f:
-    for l in f:
-        if l.startswith("PROMPT_TOKENS "):
-            toks = ast.literal_eval(l[len("PROMPT_TOKENS "):])
-            break
-assert toks is not None, "PROMPT_TOKENS not found in q1.log"
-print("prompt tokens:", len(toks))
-
 # read the activations the same way read_activs.py does; the file is written by
-# ActivsSaver in xllamacpp.py. 
-activs = load_activs("q1_oracle_activs.npz")
-print("activations tensors:", len(activs), "last shape:", activs[-1].shape)
+# ActivsSaver in xllamacpp.py. The token list is the first node of each chunk,
+# so there is no need to grep it from a separate log file any more.
+activs, names = load_activs(args.activs_file)
+print("activations tensors:", len(activs))
 
-# each token is captured once per connected layer (l_out-16 and norm), so the
-# number of activation vectors should be double the number of prompt tokens
-nactivs = sum(a.shape[0] for a in activs)
-hdim = activs[0].shape[1]
-print("activation vectors:", nactivs, "tokens:", len(toks), "expected:", 2 * len(toks))
-assert nactivs == 2 * len(toks), "activation vectors should be double the prompt tokens"
+# The file is a stream of capture chunks, each made of 3 tensors: the token ids
+# (inp_tokens), the per-token first connected layer (l_out), and the residual
+# stream / norm (result_norm). Group them per chunk to rebuild one input vector
+# per token: concatenate the l_out vector with the (broadcast) norm vector.
+STEP = 3
+assert len(activs) % STEP == 0, "expected a multiple of %d tensors" % STEP
+toks = []      # token ids, in order
+L1 = []        # per-token first connected layer vectors
+L2 = []        # per-token norm/residual vectors (right half of the input)
+for i in range(0, len(activs), STEP):
+    tnode = np.asarray(activs[i]).flatten()
+    a = activs[i + 1]
+    b = activs[i + 2]
+    n = len(tnode)
+    # the per-token layer is the one matching the token count; the other (single
+    # vector, e.g. result_norm) is the same for the whole chunk and is broadcast
+    if a.shape[0] == n:
+        per_tok, single = a, b
+    elif b.shape[0] == n:
+        per_tok, single = b, a
+    else:
+        raise ValueError("no layer vector matches %d tokens (shapes %s, %s)" %
+                         (n, a.shape, b.shape))
+    toks.extend([int(x) for x in tnode])
+    L1.append(per_tok)
+    if single.shape[0] == n:
+        L2.append(single)
+    else:
+        L2.append(np.broadcast_to(single, (n, single.shape[1])))
 
-# each activation tensor is one capture of a connected layer; the two connected
-# layers (l_out-16, norm) alternate across successive chunks, so every pair of
-# chunks (2k, 2k+1) holds the two layer vectors for the same set of tokens.
-# Rebuild one vector per token per layer, then concatenate them into the MLP
-# input vector for that token.
-n_layers = 2
-layer_vecs = [np.concatenate([a for a in activs[layer::n_layers]], axis=0) for layer in range(n_layers)]
-assert all(len(v) == len(toks) for v in layer_vecs), "layer vectors must match token count"
-X = np.concatenate(layer_vecs, axis=1)  # (ntoks, 2*dim) input pairs
+toks = np.array(toks)
+X = np.concatenate([np.concatenate(L1, axis=0), np.concatenate(L2, axis=0)], axis=1)
+hdim = X.shape[1] // 2
+print("tokens:", len(toks), "virtual dim:", hdim)
+assert len(toks) == X.shape[0], "token count must match the number of input vectors"
 
 # the target is the embedding of the token id at t+1 (shifted right wrt t)
 # the unembedding matrix is stored row by row (one row per token), so the
 # shape is (vocab_size, n_embd); read it from the dims file written by
 # SAVE_EMB in xllamacpp.py so other LLMs work too
-with open("detembeds.dims") as f:
+with open(args.dims) as f:
     # first two lines are ne3/ne2 (always 1); then ne1 (vocab), ne0 (n_embd)
     f.readline()
     f.readline()
     ne1 = int(f.readline().strip())
     ne0 = int(f.readline().strip())
-embeds = np.fromfile("detembeds.bin", dtype=np.float32)
+embeds = np.fromfile(args.embeds, dtype=np.float32)
 embeds.shape = (ne1, ne0)  # (vocab_size, n_embd)
-Y = embeds[np.array(toks[1:])]
+Y = embeds[toks[1:]]
 X = X[:-1]  # last token has no t+1 target
 print("train set:", X.shape, "->", Y.shape)
 
@@ -148,7 +169,14 @@ loader = torch.utils.data.DataLoader(ds, batch_size=256, shuffle=True)
 
 model = model.to(device)
 model.train()
-for epoch in range(30):
+
+# save a checkpoint every 1/th of the total number of epochs, so we end up with
+# `n_checkpoints` snapshots of the MLP on disk; the final-epoch checkpoint is
+# skipped because the same state is saved separately to mlp.pt below
+n_epochs = args.nepochs
+n_checkpoints = 10
+checkpoint_every = n_epochs // n_checkpoints
+for epoch in range(n_epochs):
     total = 0.0
     total2 = 0.0
     for xb, yb in loader:
@@ -173,6 +201,15 @@ for epoch in range(30):
           model.sim_n, model.sim_min, model.sim_mean,
           (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
     model.initstats()
+
+    # checkpoint every 1/10th of the total number of epochs, except the final
+    # epoch whose checkpoint would duplicate the `mlp.pt` saved afterwards
+    if (epoch + 1) < n_epochs and (epoch + 1) % checkpoint_every == 0:
+        state = model.state_dict()
+        state["thr"] = model.thr
+        ckpt_path = "mlp_%03d.pt" % (epoch + 1)
+        torch.save(state, ckpt_path)
+        print("checkpoint saved to", ckpt_path)
 
 # save the learned parameters (keys, vals) and the threshold to disk
 state = model.state_dict()

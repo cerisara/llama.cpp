@@ -45,6 +45,15 @@ except: nlayers=0
 # (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
 save_emb = bool(os.environ.get("SAVE_EMB"))
 
+# node names used for the ladder pairing (must match the entries of
+# layers2save + the TOKNOD node):
+#   MIDDLE = hidden-state output of a transformer block (e.g. "l_out-14")
+#   LAST   = final RMS-normed hidden state just before the unembedding
+#   TOKEN  = token-embedding node that TOKNOD also shares (never in a pair)
+MIDDLE_NODE_PREFIX = "l_out"
+LAST_NODE = "result_norm"
+TOKEN_NODES = ("embd", "token_embd", "inp_tokens")
+
 def build_opts(modnom):
     # the model filename usually embeds whether it is a MoE (e.g. "A3B");
     # the check is only used to pick sensible GPU/CPU offload defaults
@@ -239,10 +248,16 @@ class SharedMem(threading.Thread):
         # and return the raw (already OpenAI-formatted) response
         url = "http://localhost:"+PORT+endpoint
         headers = { "Content-Type": "application/json" }
-        print("sending raw payload to llama-server", endpoint)
+        print("sending raw payload to llama-server", endpoint, flush=True)
         response = requests.post(url, json=req, headers=headers)
-        print("Status code:", response.status_code)
-        if str(response.status_code)[0] != "2": return None
+        print("Status code:", response.status_code, flush=True)
+        if str(response.status_code)[0] != "2":
+            # capture llama-server's actual error so it's not swallowed by the
+            # generic "llama.cpp rollout failed" 500 we relay to the client
+            print("UPSTREAM ERROR BODY:", response.text[:2000], flush=True)
+            return None
+        # return the OpenAI-formatted response so the handler can relay it as 200
+        return response.json()
 
     def raw_rollout_stream(self, req, endpoint):
         # this method is used when running inference as a server, streaming mode
@@ -496,29 +511,73 @@ class LadderHandler:
         # reads self.keys.weight (it never calls keys(x) as a layer)
         # row-normalize the stored key directions (see MLP.forward)
         self.keys_w = keys / np.linalg.norm(keys, axis=1, keepdims=True)
-        self.prev = None  # previous (l_out-16) activation, paired with the next one
+        self.prev = None       # buffered single last-token vector of the middle layer
+        self.prev_name = None  # node name of the buffered vector
         self.n = 0
 
+    @staticmethod
+    def _is_middle(name):
+        # hidden-state output of a transformer block (e.g. "l_out-14")
+        return name.startswith(MIDDLE_NODE_PREFIX)
+
+    @staticmethod
+    def _is_last(name):
+        # final normed hidden state just before the unembedding
+        return name == LAST_NODE
+
+    @staticmethod
+    def _is_token(name):
+        # token-embedding node never takes part in a pair
+        return name in TOKEN_NODES
+
     def processActivations(self, actbig, i, node_name=""):
+        # the MLP only accepts a single vector per layer: whatever the size of
+        # the incoming prefill ubatch, only the last-token hidden vector (the
+        # one llama-server actually samples) is fed to the MLP.
         actbig = np.asarray(actbig, dtype=np.float32)
-        if self.prev is None:
-            # first layer: just buffer it unchanged
-            self.prev = actbig.copy()
+        last = np.ascontiguousarray(actbig[-1])   # (ne0,) last-token vector
+        name = node_name or ""
+
+        # only middle/last-layer nodes can start a pair; the token layer (and
+        # any other node) is never buffered.
+        if not (self._is_middle(name) or self._is_last(name)) or self._is_token(name):
             return None
-        # pair is [prev (l_out-16), current (norm)]; the MLP input is the 2*dim concat
-        X = np.concatenate([self.prev, actbig], axis=1)
-        self.prev = None
-        # normalized cosine similarity between the input and every stored key
-        xn = X / np.linalg.norm(X, axis=1, keepdims=True)
-        sim = xn @ self.keys_w.T                       # (T, dhid)
-        gate = np.maximum(sim - self.thr, 0.0)         # test-time thresholded ReLU
-        bias = gate @ self.vals_w.T                    # (T, hdim)
+
+        if self.prev is None:
+            self.prev = last.copy()
+            self.prev_name = name
+            return None
+
+        # name checks: both names belong to the {middle, last} node classes,
+        # differ from one another (a node can't be both), and neither is the
+        # token layer. The natural order middle -> last is also enforced so the
+        # MLP input is always [middle, last].
+        if not (self._is_middle(self.prev_name) and self._is_last(name)):
+            print("WARNING: ladder pair rejected (not a middle -> last pair): "
+                  + "prev=" + str(self.prev_name) + " cur=" + str(name)
+                  + " shape=" + str(actbig.shape))
+            # refresh the buffer with the current node so aligned pairs keep working
+            self.prev = last.copy()
+            self.prev_name = name
+            return None
+
+        # concatenate the two single last-token vectors (2*ne0)
+        X = np.concatenate([self.prev, last])      # (2*ne0,)
+        xn = X / np.linalg.norm(X)                 # (2*ne0,)
+        sim = xn @ self.keys_w.T                   # (dhid,)
+        gate = np.maximum(sim - self.thr, 0.0)     # (dhid,)
+        bias = gate @ self.vals_w.T                # (hdim,)
         if self.vals_b is not None: bias = bias + self.vals_b
-        # reinject: residual stream is the norm half of the input (== current actbig)
-        out = actbig + bias
+        out = last + bias                          # (ne0,)
+        self.prev = None
+        self.prev_name = None
         self.n += 1
         print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape))
-        return out.astype(np.float32)
+        # return the full activation with only the last-token row modified so the
+        # shared-memory reinjection (write_last_token) stays unchanged
+        y = actbig.copy()
+        y[-1] = out.astype(np.float32)
+        return y
 
 
 def runLadderOnFile(prompts_file, mlpfile, modnom):
@@ -662,6 +721,21 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                 self._send(200, {"object": "list",
                                  "data": [{"id": model_name, "object": "model",
                                            "created": int(time.time()), "owned_by": "xllamacpp"}]})
+            elif self.path == "/tokenizer_info":
+                # Remote-tokenizer endpoint: let the lm-evaluation-harness use
+                # llama.cpp's own tokenizer instead of importing transformers.
+                try:
+                    r = requests.get("http://localhost:"+PORT+"/props",
+                                     headers={"Content-Type": "application/json"}, timeout=30)
+                    p = r.json()
+                    self._send(200, {
+                        "eos_token": p.get("eos_token"),
+                        "bos_token": p.get("bos_token"),
+                        "pad_token": p.get("pad_token") or p.get("bos_token"),
+                        "chat_template": p.get("chat_template"),
+                    })
+                except Exception as e:
+                    self._send(500, {"error": {"message": "tokenizer_info failed: "+str(e)}})
             else:
                 self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
 
@@ -672,6 +746,26 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
                 self.wfile.write(b"Shutting down\n")
                 # shutdown() must not be called from the serving thread
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+
+            if self.path == "/tokenize":
+                req = self._req()
+                content = req.get("prompt", req.get("content", ""))
+                add = bool(req.get("add_special_tokens", False))
+                r = requests.post("http://localhost:"+PORT+"/tokenize",
+                                  json={"content": content, "add_special": add,
+                                        "parse_special": False},
+                                  headers={"Content-Type": "application/json"}, timeout=30)
+                self._send(200, {"tokens": r.json().get("tokens", [])})
+                return
+
+            if self.path == "/detokenize":
+                req = self._req()
+                toks = req.get("tokens", [])
+                r = requests.post("http://localhost:"+PORT+"/detokenize",
+                                  json={"tokens": toks},
+                                  headers={"Content-Type": "application/json"}, timeout=30)
+                self._send(200, {"prompt": r.json().get("content", "")})
                 return
 
             if self.path not in ("/v1/chat/completions", "/v1/completions"):
