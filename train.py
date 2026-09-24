@@ -14,6 +14,8 @@ parser.add_argument("--dims", default="detembeds.dims",
                     help="dims file for the unembedding matrix (default detembeds.dims)")
 parser.add_argument("--embeds", default="detembeds.bin",
                     help="raw unembedding matrix (default detembeds.bin)")
+parser.add_argument("--nepochs", type=int, default=100,
+                    help="total number of training epochs (default 100)")
 args = parser.parse_args()
 
 device = torch.device("cpu")
@@ -167,7 +169,14 @@ loader = torch.utils.data.DataLoader(ds, batch_size=256, shuffle=True)
 
 model = model.to(device)
 model.train()
-for epoch in range(30):
+
+# save a checkpoint every 1/th of the total number of epochs, so we end up with
+# `n_checkpoints` snapshots of the MLP on disk; the final-epoch checkpoint is
+# skipped because the same state is saved separately to mlp.pt below
+n_epochs = args.nepochs
+n_checkpoints = 10
+checkpoint_every = n_epochs // n_checkpoints
+for epoch in range(n_epochs):
     total = 0.0
     total2 = 0.0
     for xb, yb in loader:
@@ -192,6 +201,15 @@ for epoch in range(30):
           model.sim_n, model.sim_min, model.sim_mean,
           (model.sim_m2 / model.sim_n) ** 0.5, model.sim_max))
     model.initstats()
+
+    # checkpoint every 1/10th of the total number of epochs, except the final
+    # epoch whose checkpoint would duplicate the `mlp.pt` saved afterwards
+    if (epoch + 1) < n_epochs and (epoch + 1) % checkpoint_every == 0:
+        state = model.state_dict()
+        state["thr"] = model.thr
+        ckpt_path = "mlp_%03d.pt" % (epoch + 1)
+        torch.save(state, ckpt_path)
+        print("checkpoint saved to", ckpt_path)
 
 # save the learned parameters (keys, vals) and the threshold to disk
 state = model.state_dict()
