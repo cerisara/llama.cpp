@@ -5,13 +5,12 @@
 
 s="Compter le nombre de fichiers dans les 2 sous-repertoires les plus recents"
 
-mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
+mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 source /home/xtof/envs/transformers/bin/activate
 rm -f cats.npz
-TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log &
-# python xllamacpp.py --model "$mod" --ladder mlp.pt > ladder.log &
+TOKNOD=$(cat toknod.txt) python xllamacpp.py --model "$mod" --activs cats.npz > ladder.log 2>&1 &
 
 # wait until the OpenAI endpoint is up
 until curl -s http://127.0.0.1:8258/v1/models >/dev/null 2>&1; do
