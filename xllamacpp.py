@@ -372,7 +372,7 @@ def initLlamacpp(llamacppdir, activsHandler, modnom):
     sm = SharedMem(activsHandler, listening_event)
     sm.start()
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
-                               "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
+                               "--no-warmup","--ctx-size","30000","--cache-ram", "0",
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *build_opts(modnom),
                                notify_event=listening_event)

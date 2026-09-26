@@ -52,6 +52,7 @@ def main():
             vec = int(args[1])
             args = args[2:]
         elif args[0] == "--tokens":
+            # print the first line of tokens
             toks = True
             args = args[2:]
         else:
