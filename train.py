@@ -16,6 +16,8 @@ parser.add_argument("--embeds", default="detembeds.bin",
                     help="raw unembedding matrix (default detembeds.bin)")
 parser.add_argument("--nepochs", type=int, default=100,
                     help="total number of training epochs (default 100)")
+parser.add_argument("--lr", type=float, default=1e-3,
+                    help="learning rate (default 1e-3)")
 args = parser.parse_args()
 
 device = torch.device("cpu")
@@ -160,8 +162,9 @@ class MLP(nn.Module):
         # caller can reuse sim (for the aux loss) instead of recomputing it
         return lasth + smoothed_vals, sim
 
+LR = args.lr
 model = MLP(X.shape[1], X.shape[1]) # choose second dim as you wish
-opt = torch.optim.Adam(model.parameters(), lr=1e-5)
+opt = torch.optim.Adam(model.parameters(), lr=LR)
 ds = torch.utils.data.TensorDataset(torch.tensor(X, dtype=torch.float32, device=device),
                                     torch.tensor(Y, dtype=torch.float32, device=device))
 print("dataset",len(ds))
@@ -204,15 +207,10 @@ for epoch in range(n_epochs):
 
     # checkpoint every 1/10th of the total number of epochs, except the final
     # epoch whose checkpoint would duplicate the `mlp.pt` saved afterwards
-    if (epoch + 1) < n_epochs and (epoch + 1) % checkpoint_every == 0:
+    if (epoch + 1) % checkpoint_every == 0:
         state = model.state_dict()
         state["thr"] = model.thr
         ckpt_path = "mlp_%03d.pt" % (epoch + 1)
         torch.save(state, ckpt_path)
         print("checkpoint saved to", ckpt_path)
 
-# save the learned parameters (keys, vals) and the threshold to disk
-state = model.state_dict()
-state["thr"] = model.thr
-torch.save(state, "mlp.pt")
-print("saved parameters to mlp.pt")
