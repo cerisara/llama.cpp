@@ -139,15 +139,14 @@ class SharedMem(threading.Thread):
                     if prev_name is not None: layer += 1
                     prev_name = name_str
                 print("detdebug",name_str, prev_name, layer, nlayers)
-                is_last = (layer % nlayers) == (nlayers - 1) # last layer before the unembedding
+                is_last = name_str == layers[-1] # last layer before the unembedding
                 handler = self.get_handler()
-                y = handler.processActivations(actbig, layer % nlayers, name_str)
+                y = handler.processActivations(actbig, 0, name_str)
                 if y is None:
                     pass
                 elif not is_last:
                     # llamacpp only reads the last layer back, ignore the rest
-                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str
-                          +" changes ignored")
+                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str +" changes ignored")
                 else:
                     # last layer: write the modified last token back before
                     # llamacpp uses it for the unembedding. llama-server only
@@ -497,6 +496,8 @@ class LadderHandler:
         import torch
         state = torch.load(mlpfile, map_location="cpu")
         self.thr = float(state.pop("thr"))
+        # debug
+        self.thr = -1.
         keys = state["keys.weight"].numpy().astype(np.float32)        # (dhid, din)
         self.vals_w = state["vals.weight"].numpy().astype(np.float32) # (hdim, dhid)
         # vals is a nn.Linear, so its forward also adds the bias
@@ -529,7 +530,10 @@ class LadderHandler:
         out = last + bias                          # (ne0,)
         self.prev = None
         self.n += 1
-        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape))
+        bias_norm = np.linalg.norm(bias)
+        orig_norm = np.linalg.norm(last)
+        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape)+
+              " bias_norm="+str(bias_norm)+" orig_norm="+str(orig_norm))
         # return the full activation with only the last-token row modified so the
         # shared-memory reinjection (write_last_token) stays unchanged
         y = actbig.copy()
