@@ -87,11 +87,31 @@ def save_realtokens_chunks(tokens):
     return chunks
 
 
+def read_tokens_arg(arg):
+    """Return the list of token ids given either as an inline space-separated
+    string, or (when prefixed with '@') as the content of a file whose
+    space-separated token ids are read from it."""
+    if arg.startswith("@"):
+        path = arg[1:]
+        try:
+            with open(path) as f:
+                data = f.read()
+        except OSError as e:
+            print(f"error: cannot read token file {path}: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"TOKENS_FILE {path}")
+        return [int(t) for t in data.split()]
+    return [int(t) for t in arg.split()]
+
+
 def main():
     if len(sys.argv) < 2:
-        print("usage: realtokens.py '<space separated token ids>'", file=sys.stderr)
+        print(
+            "usage: realtokens.py '<space separated token ids>' | '@<tokens file>'",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    tokens = [int(t) for t in sys.argv[1].split()]
+    tokens = read_tokens_arg(sys.argv[1])
     print("DETOKEN", tokens)
     save_realtokens_text(tokens)
     save_realtokens_chunks(tokens)

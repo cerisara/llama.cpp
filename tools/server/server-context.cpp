@@ -43,6 +43,14 @@ constexpr int HTTP_POLLING_SECONDS = 1;
 static const bool detson_logits_all = getenv("LOGITS_ALL") != nullptr;
 
 static common_speculative_output_limits server_output_limits(const common_params & params) {
+    // detson: request logits for every prompt token (LOGITS_ALL). The default
+    // output limit is n_parallel*(1+n_draft) = a few rows, which output_reserve()
+    // asserts against (n_outputs_max <= cparams.n_outputs_max) as soon as a
+    // prefill batch wants logits for more tokens than that. Allow the whole
+    // prefill batch to be outputs so the server path works.
+    if (detson_logits_all) {
+        return { params.n_batch, params.n_batch };
+    }
     if (params.embedding ||
             (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED && params.pooling_type != LLAMA_POOLING_TYPE_NONE)) {
         return { params.n_batch, 1 };

@@ -37,22 +37,16 @@ SEM_P2C = "/py2c_sem"
 
 try:
     with open("layers2save") as f:
-        nlayers = sum(1 for line in f if line.strip())
-except: nlayers=0
+        layers = []
+        for line in f: layers.append(line.strip())
+    nlayers = len(layers)
+except: nlayers,layers=0,[]
+print("detlayers",layers,nlayers)
 
 # SAVE_EMB dumps the unembedding matrix (detembeds.bin). The dump hook only
 # works when that tensor is whole and in host memory: run all layers on CPU
 # (ngl 0) and avoid GPU/CPU splits. Otherwise offload greedily.
 save_emb = bool(os.environ.get("SAVE_EMB"))
-
-# node names used for the ladder pairing (must match the entries of
-# layers2save + the TOKNOD node):
-#   MIDDLE = hidden-state output of a transformer block (e.g. "l_out-14")
-#   LAST   = final RMS-normed hidden state just before the unembedding
-#   TOKEN  = token-embedding node that TOKNOD also shares (never in a pair)
-MIDDLE_NODE_PREFIX = "l_out"
-LAST_NODE = "result_norm"
-TOKEN_NODES = ("embd", "token_embd", "inp_tokens")
 
 def build_opts(modnom):
     # the model filename usually embeds whether it is a MoE (e.g. "A3B");
@@ -142,18 +136,17 @@ class SharedMem(threading.Thread):
                 # each forward pass is a full layer progression (per ubatch), so
                 # a name change means we moved to the next layer
                 if name_str != prev_name:
-                    if prev_name is not None:
-                        layer += 1
+                    if prev_name is not None: layer += 1
                     prev_name = name_str
-                is_last = (layer % nlayers) == (nlayers - 1) # last layer before the unembedding
+                print("detdebug",name_str, prev_name, layer, nlayers)
+                is_last = name_str == layers[-1] # last layer before the unembedding
                 handler = self.get_handler()
-                y = handler.processActivations(actbig, layer % nlayers, name_str)
+                y = handler.processActivations(actbig, 0, name_str)
                 if y is None:
                     pass
                 elif not is_last:
                     # llamacpp only reads the last layer back, ignore the rest
-                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str
-                          +" changes ignored")
+                    print("WARNING: handler modified non-last layer "+str(layer % nlayers)+" node="+name_str +" changes ignored")
                 else:
                     # last layer: write the modified last token back before
                     # llamacpp uses it for the unembedding. llama-server only
@@ -379,7 +372,7 @@ def initLlamacpp(llamacppdir, activsHandler, modnom):
     sm = SharedMem(activsHandler, listening_event)
     sm.start()
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
-                               "--no-warmup","--ctx-size","30000","--cache-ram", "0", 
+                               "--no-warmup","--ctx-size","30000","--cache-ram", "0",
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *build_opts(modnom),
                                notify_event=listening_event)
@@ -503,6 +496,8 @@ class LadderHandler:
         import torch
         state = torch.load(mlpfile, map_location="cpu")
         self.thr = float(state.pop("thr"))
+        # debug
+        self.thr = -1.
         keys = state["keys.weight"].numpy().astype(np.float32)        # (dhid, din)
         self.vals_w = state["vals.weight"].numpy().astype(np.float32) # (hdim, dhid)
         # vals is a nn.Linear, so its forward also adds the bias
@@ -511,24 +506,7 @@ class LadderHandler:
         # reads self.keys.weight (it never calls keys(x) as a layer)
         # row-normalize the stored key directions (see MLP.forward)
         self.keys_w = keys / np.linalg.norm(keys, axis=1, keepdims=True)
-        self.prev = None       # buffered single last-token vector of the middle layer
-        self.prev_name = None  # node name of the buffered vector
         self.n = 0
-
-    @staticmethod
-    def _is_middle(name):
-        # hidden-state output of a transformer block (e.g. "l_out-14")
-        return name.startswith(MIDDLE_NODE_PREFIX)
-
-    @staticmethod
-    def _is_last(name):
-        # final normed hidden state just before the unembedding
-        return name == LAST_NODE
-
-    @staticmethod
-    def _is_token(name):
-        # token-embedding node never takes part in a pair
-        return name in TOKEN_NODES
 
     def processActivations(self, actbig, i, node_name=""):
         # the MLP only accepts a single vector per layer: whatever the size of
@@ -536,31 +514,12 @@ class LadderHandler:
         # one llama-server actually samples) is fed to the MLP.
         actbig = np.asarray(actbig, dtype=np.float32)
         last = np.ascontiguousarray(actbig[-1])   # (ne0,) last-token vector
-        name = node_name or ""
 
-        # only middle/last-layer nodes can start a pair; the token layer (and
-        # any other node) is never buffered.
-        if not (self._is_middle(name) or self._is_last(name)) or self._is_token(name):
-            return None
-
-        if self.prev is None:
+        if node_name==layers[-2]:
             self.prev = last.copy()
-            self.prev_name = name
             return None
-
-        # name checks: both names belong to the {middle, last} node classes,
-        # differ from one another (a node can't be both), and neither is the
-        # token layer. The natural order middle -> last is also enforced so the
-        # MLP input is always [middle, last].
-        if not (self._is_middle(self.prev_name) and self._is_last(name)):
-            print("WARNING: ladder pair rejected (not a middle -> last pair): "
-                  + "prev=" + str(self.prev_name) + " cur=" + str(name)
-                  + " shape=" + str(actbig.shape))
-            # refresh the buffer with the current node so aligned pairs keep working
-            self.prev = last.copy()
-            self.prev_name = name
-            return None
-
+        if node_name!=layers[-1]: return None
+ 
         # concatenate the two single last-token vectors (2*ne0)
         X = np.concatenate([self.prev, last])      # (2*ne0,)
         xn = X / np.linalg.norm(X)                 # (2*ne0,)
@@ -570,9 +529,11 @@ class LadderHandler:
         if self.vals_b is not None: bias = bias + self.vals_b
         out = last + bias                          # (ne0,)
         self.prev = None
-        self.prev_name = None
         self.n += 1
-        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape))
+        bias_norm = np.linalg.norm(bias)
+        orig_norm = np.linalg.norm(last)
+        print("ladder applied to layer pair "+str(self.n)+" shape="+str(actbig.shape)+
+              " bias_norm="+str(bias_norm)+" orig_norm="+str(orig_norm))
         # return the full activation with only the last-token row modified so the
         # shared-memory reinjection (write_last_token) stays unchanged
         y = actbig.copy()
