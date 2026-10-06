@@ -614,7 +614,9 @@ def injectTokenAct(prompts_file, token_index, modnom):
             self.injected = False
 
         def processActivations(self, actbig, i, node_name=""):
-            if not self.injected and i == nlayers - 1:
+            # identify the last layer by node name: SharedMem always passes
+            # i=0, so the positional index cannot be used to spot the layer
+            if not self.injected and node_name == layers[-1]:
                 print("injecting target embedding at last layer (prefill) shape=" + str(actbig.shape))
                 self.injected = True
                 print("injected vector first 5 values:", self.emb[:5])
