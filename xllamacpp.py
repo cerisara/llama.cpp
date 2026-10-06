@@ -204,7 +204,7 @@ class SharedMem(threading.Thread):
         ne0 = int(np.frombuffer(mv, dtype=np.float32).item())
         mv = self.buf[start : start + 4*ne0*ne1]
         vec = np.frombuffer(mv, dtype=np.float32)
-        vec.shape = (ne1,ne0)
+        vec = vec.reshape((ne1, ne0))
         # for i in range(ne1): print(vec[i][0])
         return vec, name_str
 
@@ -389,7 +389,7 @@ def initLlamacpp(llamacppdir, activsHandler, modnom):
 
     sm = SharedMem(activsHandler, listening_event)
     sm.start()
-    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
+    runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-ui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0",
                                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
                                "--port", PORT, *build_opts(modnom),
@@ -446,7 +446,7 @@ def load_activs(infile):
             names.append(name)
             nbytes = np.frombuffer(f.read(8), dtype=np.int64).item()
             data = np.frombuffer(gzip.decompress(f.read(nbytes)), dtype=np.float32)
-            data.shape = shape
+            data = data.reshape(shape)
             activs.append(data)
     return activs, names
 
