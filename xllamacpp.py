@@ -19,7 +19,7 @@ import mmap
 import gzip
 import subprocess
 import numpy as np
-from posix_ipc import Semaphore, SharedMemory
+from posix_ipc import Semaphore, SharedMemory, BusyError
 import time
 import threading
 import signal
@@ -75,7 +75,9 @@ class SharedMem(threading.Thread):
     def __init__(self, activsHandler, listening_event):
         self.activsHandler = activsHandler
         self.listening_event = listening_event
+        self.stopped = threading.Event()
         threading.Thread.__init__(self)
+        self.daemon = True
 
     def get_handler(self):
         # use the dummy handler until llama.cpp is really ready (listening text
@@ -95,6 +97,8 @@ class SharedMem(threading.Thread):
                 break
             except FileNotFoundError:
                 pass
+            if self.stopped.is_set():
+                return
             time.sleep(1)
         # ensure the shared file is at least as big as the C++ buffer, even if a
         # stale /dev/shm/ring_buffer_demo from a previous run still exists
@@ -109,6 +113,8 @@ class SharedMem(threading.Thread):
                 self.sem_py2c = Semaphore(SEM_P2C)
                 break
             except: pass
+            if self.stopped.is_set():
+                return
             time.sleep(1)
         print("sharedmem thread detected semaphores; now listen to llamacpp activations")
 
@@ -118,7 +124,19 @@ class SharedMem(threading.Thread):
         while not fincpp:
             # Wait for C++ to fill buffer
             print('python wait layer',layer)
-            self.sem_c2p.acquire()
+            # acquire with a timeout so a SIGTERM-killed llama-server (which
+            # never posts the sentinel/semaphore) cannot wedge us here forever
+            while True:
+                try:
+                    self.sem_c2p.acquire(timeout=0.5)
+                    break
+                except (TimeoutError, BusyError):
+                    if self.stopped.is_set():
+                        break
+            if self.stopped.is_set():
+                fincpp = True
+                print("stop requested; ending the listener loop")
+                break
             print("now reading layer from shared buffer",layer)
             vec, name_str = self.get_buffer_view()
             if vec is None:
@@ -483,7 +501,8 @@ def saveActivations(prompts_file, modnom):
     print("Stopping llama.cpp process...")
     procCPP.stop()
     print("Waiting for SharedMem thread to finish...")
-    sharedRAM.join()
+    sharedRAM.stopped.set()
+    sharedRAM.join(timeout=10)
     handler.save()
 
 class LadderHandler:
@@ -565,7 +584,8 @@ def runLadderOnFile(prompts_file, mlpfile, modnom):
     print("Stopping llama.cpp process...")
     procCPP.stop()
     print("Waiting for SharedMem thread to finish...")
-    sharedRAM.join()
+    sharedRAM.stopped.set()
+    sharedRAM.join(timeout=10)
 
 
 def injectTokenAct(prompts_file, token_index, modnom):
@@ -624,7 +644,8 @@ def injectTokenAct(prompts_file, token_index, modnom):
     print("Stopping llama.cpp process...")
     procCPP.stop()
     print("Waiting for SharedMem thread to finish...")
-    sharedRAM.join()
+    sharedRAM.stopped.set()
+    sharedRAM.join(timeout=10)
 
 class NoopHandler:
     # pass activations through unmodified (used when serving without a ladder)
@@ -793,7 +814,8 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
         server.server_close()
         print("Stopping llama.cpp process...")
         procCPP.stop()
-        sharedRAM.join()
+        sharedRAM.stopped.set()
+        sharedRAM.join(timeout=10)
         if isinstance(handler, SaveActivsHandler):
             handler.close()
 
