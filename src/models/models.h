@@ -1510,6 +1510,8 @@ struct llama_model_nemotron_h : public llama_model_base {
         ggml_tensor * build_ffn_layer(ggml_tensor * cur, const llama_model & model, int il);
         ggml_tensor * build_attention_layer(ggml_tensor * cur, llm_graph_input_attn_kv * inp_attn,
             const llama_model & model, int64_t n_embd_head, int il);
+        // ladder (cppladder graph mode): l_out-K feeding the side net
+        ggml_tensor * ladder_prev = nullptr;
     };
 
     std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;

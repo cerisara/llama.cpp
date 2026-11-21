@@ -5,7 +5,8 @@
 source ~/envs/transformers/bin/activate
 
 mod="/home/xtof/ggufs/Qwen3.5-9B-Q4_K_M.gguf"
-mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+# mod="/home/xtof/ggufs/qwen2.5-1.5b-instruct-q5_k_m.gguf"
+# mod="/home/xtof/ggufs/qwen2.5-0.5b-instruct-q5_k_m.gguf"
 
 echo "save unembedding matrix"
 echo 'La capitale de la Belgique est Bruxelles.' > tt

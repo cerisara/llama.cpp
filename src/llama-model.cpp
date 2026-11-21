@@ -23,6 +23,10 @@
 #include "models/models.h"
 
 #include "ggml.h"
+#include "ggml-backend.h"
+
+#include <cstdio>
+#include <cstdlib>
 #include "ggml-cpp.h"
 
 #include <algorithm>
@@ -1186,6 +1190,14 @@ llama_model::~llama_model() {
     for (auto * lora : loras) {
         delete lora;
     }
+    if (ladder_buf) {
+        ggml_backend_buffer_free(ladder_buf);
+        ladder_buf = nullptr;
+    }
+    if (ladder_ctx) {
+        ggml_free(ladder_ctx);
+        ladder_ctx = nullptr;
+    }
 }
 
 void llama_model_base::load_stats(llama_model_loader & ml) {
@@ -1813,7 +1825,73 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
 
+    // ladder (cppladder graph mode): optionally attach the folded side-net weight
+    load_ladder_weight();
+
     return true;
+}
+
+void llama_model_base::load_ladder_weight() {
+    const char * path = getenv("LADDER_BIN");
+    fprintf(stderr, "load_ladder_weight: LADDER_BIN=%s\n", path ? path : "(unset)");
+    if (!path) {
+        return;
+    }
+    if (!output || !output->buffer) {
+        fprintf(stderr, "ladder: no lm-head buffer to co-locate weights - ladder disabled\n\n");
+        return;
+    }
+    FILE * f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "ladder: cannot open %s - ladder disabled\n\n", path);
+        return;
+    }
+    int32_t magic = 0, din = 0, hdim = 0;
+    bool ok =
+        fread(&magic, 4, 1, f) == 1 &&
+        fread(&din,   4, 1, f) == 1 &&
+        fread(&hdim,  4, 1, f) == 1 &&
+        magic == (int32_t) 0x4C414457 &&              // 'LADW' (cppladder_export_graph.py)
+        din  == 2*hparams.n_embd &&
+        hdim == hparams.n_embd;
+    if (!ok) {
+        fclose(f);
+        fprintf(stderr, "ladder: bad header in %s (want din=%d hdim=%d) - ladder disabled\n\n", path, 2*hparams.n_embd, hparams.n_embd);
+        return;
+    }
+    const size_t bytes = (size_t) din * hdim * 2;  // f16
+    ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(output->buffer);
+    ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, bytes);
+    if (!buf) {
+        fclose(f);
+        fprintf(stderr, "ladder: cannot allocate %zu bytes on %s - ladder disabled\n\n", bytes, ggml_backend_buft_name(buft));
+        return;
+    }
+    ggml_init_params iparams = { /*.mem_size   =*/ ggml_tensor_overhead()*2, /*.mem_buffer =*/ nullptr, /*.no_alloc   =*/ true };
+    ggml_context * ctx = ggml_init(iparams);
+    ggml_tensor * w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, din, hdim);
+    ggml_set_name(w, "ladder_w");
+    const ggml_status st = ggml_backend_tensor_alloc(buf, w, ggml_backend_buffer_get_base(buf));
+    std::vector<uint8_t> tmp(bytes);
+    ok = st == GGML_STATUS_SUCCESS && fread(tmp.data(), 1, bytes, f) == bytes;
+    fclose(f);
+    if (!ok) {
+        ggml_backend_buffer_free(buf);
+        ggml_free(ctx);
+        fprintf(stderr, "ladder: failed to read %zu bytes from %s - ladder disabled\n\n", bytes, path);
+        return;
+    }
+    ggml_backend_tensor_set(w, tmp.data(), 0, bytes);
+    ggml_backend_buffer_set_usage(buf, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    ladder_ctx = ctx;
+    ladder_buf = buf;
+    ladder_w   = w;
+    const char * e = getenv("LADDER_LAYER");
+    ladder_layer = e ? atoi(e) : 19;
+    if (ladder_layer < 0 || ladder_layer >= (int) hparams.n_layer()) {
+        ladder_layer = 19;
+    }
+    fprintf(stderr, "ladder: %s (%dx%d f16) on %s, injected at l_out-%d\n\n", path, din, hdim, ggml_backend_buft_name(buft), ladder_layer);
 }
 
 ggml_tensor * llama_model_base::create_tensor(llama_model_loader & ml, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {

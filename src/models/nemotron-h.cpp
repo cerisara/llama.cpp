@@ -222,6 +222,15 @@ llama_model_nemotron_h::graph::graph(const llama_model & model, const llm_graph_
 
     cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
 
+    if (model.ladder_w && ladder_prev) {
+        // ladder (cppladder graph mode): dense side-net folded into one matrix W
+        // (rows scaled by 1/sqrt(2*n_embd) at export) so that
+        // W @ rms_norm(concat(l_out-K, result_norm)) == vals @ (keys . x/||x||)
+        ggml_tensor * X = ggml_concat(ctx0, ladder_prev, cur, 0);
+        X = ggml_rms_norm(ctx0, X, 0.0f);
+        cur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.ladder_w, X), cur);
+    }
+
     // seed for the MTP/NextN draft head
     cb(cur, "h_nextn", -1);
     res->t_h_nextn = cur;
@@ -313,6 +322,11 @@ ggml_tensor * llama_model_nemotron_h::graph::build_ffn_layer(ggml_tensor * cur, 
 
     cur = build_cvec(cur, il);
     cb(cur, "l_out", il);
+
+    // ladder (cppladder graph mode): remember the l_out-K row of this block
+    if (model.ladder_w && il == model.ladder_layer) {
+        ladder_prev = cur;
+    }
 
     return cur;
 }

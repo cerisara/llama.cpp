@@ -34,6 +34,10 @@
 #include <cinttypes>
 #include <stdlib.h>
 
+// cppladder: native C++ test-time ladder (no python round trips); see
+// cppladder_ladder.h. Copy that header next to this file.
+#include "cppladder_ladder.h"
+
 static const char* SHM_NAME = "/ring_buffer_demo";
 static const char* SEM_C2P = "/c2py_sem";
 static const char* SEM_P2C = "/py2c_sem";
@@ -54,6 +58,9 @@ int done_first_node = 0; // stop printing node names once the sequence is known
 struct callback_data {
     std::vector<uint8_t> data;
 };
+
+// cppladder: native ladder instance, installed when LADDER_CPP=<weights.bin>
+static LadderCpp g_ladder;
 
 static void detson_send_tensor(const char * name, uint8_t * data, ggml_type type, const int64_t * ne, const size_t * nb) {
     float sum = 0;
@@ -324,6 +331,76 @@ static bool detsoncb_share_activs(struct ggml_tensor * t, bool ask, void * user_
     return true;
 }
 
+// ===== cppladder: native ladder eval callback ==============================
+// Same semantics as the python LadderHandler: at the first layer in
+// layers2save, stash the LAST-token row; at the second, compute the dense
+// cosine-gate bias and add it to the last-token row (only the sampled row is
+// modified). No shared memory, no semaphores, no python.
+static bool detsoncb_ladder_cpp(struct ggml_tensor * t, bool ask, void * user_data) {
+    if (detsavelayer[0] == NULL || detsavelayer[1] == NULL) return true;
+    const size_t L0 = strlen(detsavelayer[0]), L1 = strlen(detsavelayer[1]);
+    const bool m0 = (L0 == strlen(t->name) && !strncmp(t->name, detsavelayer[0], L0));
+    const bool m1 = (L1 == strlen(t->name) && !strncmp(t->name, detsavelayer[1], L1));
+    // IMPORTANT (perf): in the 'ask' phase answer honestly - only the two ladder
+    // nodes want their data. ggml_backend_sched groups all consecutive nodes
+    // that answer false into ONE subgraph launch; if ask returns true for every
+    // node (the old detson behaviour) it launches + device-syncs EVERY node
+    // separately: ~130 ms/token of pure launch/sync latency.
+    if (ask) return m0 || m1;
+    if (!m0 && !m1) return true;
+#ifdef CPPLADDER_TIMING
+    static long ncalls = 0;
+    auto tcb0 = std::chrono::steady_clock::now();
+#endif
+    const int64_t ne0 = t->ne[0], ne1 = t->ne[1];
+    if (ne1 < 1 || (t->type != GGML_TYPE_F16 && t->type != GGML_TYPE_F32)) return true;
+    const size_t tsz = ggml_type_size(t->type);
+    const size_t row_bytes = (size_t)ne0 * tsz;
+    const size_t off = (size_t)(ne1 - 1) * row_bytes;
+    std::vector<uint8_t> row(row_bytes);
+    if (!ggml_backend_buffer_is_host(t->buffer)) {
+        ggml_backend_tensor_get(t, row.data(), off, row_bytes);
+    } else {
+        memcpy(row.data(), (const uint8_t *) t->data + off, row_bytes);
+    }
+    std::vector<float> last(ne0);
+    if (t->type == GGML_TYPE_F16) {
+        const ggml_fp16_t * h = (const ggml_fp16_t *) row.data();
+        for (int64_t i = 0; i < ne0; i++) last[i] = ggml_fp16_to_fp32(h[i]);
+    } else {
+        memcpy(last.data(), row.data(), row_bytes);
+    }
+    if (m0) {
+        g_ladder.store_prev(last.data(), (int) ne0);
+#ifdef CPPLADDER_TIMING
+        fprintf(stderr, "cppladder: cb(prev) %.2f ms (fetch row)\n",
+                std::chrono::duration<double,std::milli>(
+                    std::chrono::steady_clock::now()-tcb0).count());
+#endif
+        return true;
+    }
+    g_ladder.apply(last.data(), (int) ne0);
+    if (t->type == GGML_TYPE_F16) {
+        ggml_fp16_t * h = (ggml_fp16_t *) row.data();
+        for (int64_t i = 0; i < ne0; i++) h[i] = ggml_fp32_to_fp16(last[i]);
+    } else {
+        memcpy(row.data(), last.data(), row_bytes);
+    }
+    if (!ggml_backend_buffer_is_host(t->buffer)) {
+        ggml_backend_tensor_set(t, row.data(), off, row_bytes);
+    } else {
+        memcpy((uint8_t *) t->data + off, row.data(), row_bytes);
+    }
+#ifdef CPPLADDER_TIMING
+    ncalls++;
+    if (ncalls % 200 == 0)
+        fprintf(stderr, "cppladder: cb(mod+set) %.2f ms total, n=%ld\n",
+                std::chrono::duration<double,std::milli>(
+                    std::chrono::steady_clock::now()-tcb0).count(), ncalls);
+#endif
+    return true;
+}
+
 void llama_server_terminate();
 
 static bool detsoncb_save_embeds(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -530,6 +607,37 @@ int llama_server(common_params & params, int argc, char ** argv) {
             }
         }
         LOG_WRN("detsavelayer loaded\n");
+        {
+            // cppladder: native test-time ladder, if requested
+            const char * ladder_path = getenv("LADDER_CPP");
+            if (ladder_path != NULL) {
+                if (detsavelayer[0] == NULL || detsavelayer[1] == NULL) {
+                    fprintf(stderr, "cppladder: layers2save must list 2 nodes "
+                            "(l_out-19, result_norm) - ladder disabled\n");
+                } else if (!g_ladder.load(ladder_path)) {
+                    fprintf(stderr, "cppladder: failed to load %s - ladder disabled\n",
+                            ladder_path);
+                } else {
+                    params.cb_eval = detsoncb_ladder_cpp;
+                    fprintf(stderr, "cppladder: native ladder installed from %s "
+                            "(nodes: %s, %s)\n", ladder_path,
+                            detsavelayer[0], detsavelayer[1]);
+                }
+            }
+        }
+        {
+            // DETSON_OFF kill switch: removes the eval callback entirely (plain
+            // fast graph path) unless the native C++ ladder was requested.
+            // Required for graph-mode ladder runs (LADDER_BIN): with the detson
+            // callback installed and a non-empty layers2save file in cwd, the
+            // server sem_waits forever without the xllamacpp.py proxy.
+            const char * detson_off = getenv("DETSON_OFF");
+            if (detson_off != NULL && params.cb_eval != detsoncb_ladder_cpp) {
+                params.cb_eval = nullptr;
+                params.cb_eval_user_data = nullptr;
+                fprintf(stderr, "DETSON_OFF set: detson callback removed (plain mode)\n");
+            }
+        }
     }
 
     bool is_run_by_cli = (argv == nullptr);

@@ -634,6 +634,14 @@ struct llama_model {
     struct ggml_tensor * output_s    = nullptr;
     struct ggml_tensor * output_in_s = nullptr;
 
+    // ladder (cppladder graph mode): one folded side-network weight applied at
+    // result_norm: cur += W @ rms(concat(l_out-K, cur)). W has ne0 = 2*n_embd.
+    // Loaded from the raw f16 file in $LADDER_BIN (see ladder/cppladder_*).
+    struct ggml_tensor * ladder_w        = nullptr;
+    struct ggml_context * ladder_ctx     = nullptr;   // owner of ladder_w metadata
+    ggml_backend_buffer_t ladder_buf     = nullptr;   // owner of ladder_w data
+    int ladder_layer                     = -1;        // l_out-K feeding the ladder
+
     // NextN/MTP model-level projections
     struct ggml_tensor * nextn_proj_pre  = nullptr;
     struct ggml_tensor * nextn_proj_post = nullptr;
@@ -796,6 +804,9 @@ struct llama_model_base : public llama_model {
 
     // convenience overload of create_tensor that doesn't require llama_model_loader
     ggml_tensor * create_tensor(const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags);
+
+    // ladder (cppladder graph mode): create + upload ladder_w from $LADDER_BIN
+    void load_ladder_weight();
 
     // helper: try merged gate_up_exps first, fall back to separate gate and up
     void create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_,

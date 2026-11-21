@@ -319,6 +319,9 @@ class AsyncScriptRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",   # llama-server logs contain non-UTF8 bytes; a
+                                # strict decode kills the reader thread, the
+                                # pipe fills and the server deadlocks
             bufsize=1,
             universal_newlines=True,
             preexec_fn=preexec_fn,
@@ -373,7 +376,7 @@ def initLlamacpp(llamacppdir, activsHandler, modnom):
     sm.start()
     runner = AsyncScriptRunner(llamacppdir+"/build/bin/llama-server","-m",modnom,"--no-webui",
                                "--no-warmup","--ctx-size","30000","--cache-ram", "0",
-                               "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-nkvo", 
+                               "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
                                "--port", PORT, *build_opts(modnom),
                                notify_event=listening_event)
     # llama.cpp does not print "all slots are idle" with --no-warmup; it prints
@@ -490,14 +493,15 @@ class LadderHandler:
     # runs each pair of connected-layer activations through
     # the MLP trained by train.py, and reinjects the transformed norm activation
     # back into llama.cpp. Reimplements the test-time forward of the MLP in numpy
-    # (keys are row-normalized, cosines gated by the stored threshold) so we only
-    # need the saved state dict in mlp.pt, not the nn.Module class.
+    # (keys are row-normalized, gate = raw cosine: dense, NO relu/threshold) so
+    # we only need the saved state dict in mlp.pt, not the nn.Module class.
+    # The threshold machinery (relu(sim-thr)) was removed: it was never seen in
+    # training (train's forward is dense vals(sim)), with thr=0.8 it would
+    # silence the ladder entirely, and thr=-1 injected a huge untrained constant.
     def __init__(self, mlpfile):
         import torch
         state = torch.load(mlpfile, map_location="cpu")
-        self.thr = float(state.pop("thr"))
-        # debug
-        self.thr = -1.
+        state.pop("thr", None)  # threshold removed: test == train (dense cosine gate)
         keys = state["keys.weight"].numpy().astype(np.float32)        # (dhid, din)
         self.vals_w = state["vals.weight"].numpy().astype(np.float32) # (hdim, dhid)
         # vals is a nn.Linear, so its forward also adds the bias
@@ -524,7 +528,7 @@ class LadderHandler:
         X = np.concatenate([self.prev, last])      # (2*ne0,)
         xn = X / np.linalg.norm(X)                 # (2*ne0,)
         sim = xn @ self.keys_w.T                   # (dhid,)
-        gate = np.maximum(sim - self.thr, 0.0)     # (dhid,)
+        gate = sim                                 # exact trained function: dense cosine gate
         bias = gate @ self.vals_w.T                # (hdim,)
         if self.vals_b is not None: bias = bias + self.vals_b
         out = last + bias                          # (ne0,)
@@ -650,7 +654,18 @@ def serveOpenAI(modnom, ladder_file=None, host="127.0.0.1", port=8258, activs_ou
     # serve a local minimal OpenAI-compatible endpoint on the given LLM,
     # modified by the ladder MLP when one is given; when activs_outfile is set,
     # every activation is also saved to disk just like saveActivations does
-    base = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
+    if os.environ.get("LADDER_CPP") or os.environ.get("LADDER_GRAPH"):
+        # cppladder: the ladder runs natively inside llama-server (callback mode
+        # via LADDER_CPP, or folded into the compute graph via LADDER_BIN +
+        # DETSON_OFF=1); the python handler must stay out of the loop (and would
+        # never see activations anyway, since neither path uses shared memory).
+        print("cppladder: ladder active natively in C++ "
+              "(%s) -> python handler skipped"
+              % ("graph" if os.environ.get("LADDER_GRAPH") else "callback"),
+              flush=True)
+        base = NoopHandler()
+    else:
+        base = LadderHandler(ladder_file) if ladder_file is not None else NoopHandler()
     handler = SaveActivsHandler(base, activs_outfile) if activs_outfile else base
     sharedRAM, procCPP = initLlamacpp("./", handler, modnom)
 

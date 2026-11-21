@@ -156,6 +156,7 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     // MTP/NextN layers are loaded as extra decoder blocks but not executed in the main pass.
+    ggml_tensor * ladder_prev = nullptr;   // ladder (cppladder): l_out-K feeding the side net
     for (int il = 0; il < n_layer; ++il) {
         res->t_layer_inp[il] = inpL;
 
@@ -201,6 +202,9 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
 
         cur = build_cvec(cur, il);
         cb(cur, "l_out", il);
+        if (model.ladder_w && il == model.ladder_layer) {
+            ladder_prev = cur;
+        }
 
         // Input for next layer
         inpL = cur;
@@ -208,6 +212,14 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     cur = inpL;
 
     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
+
+    if (model.ladder_w && ladder_prev) {
+        // ladder (cppladder): dense side-net folded into one matrix W (rows scaled by
+        // 1/sqrt(2*n_embd) at export) so that W @ rms_norm(x) == vals @ (keys @ x/||x||)
+        ggml_tensor * X = ggml_concat(ctx0, ladder_prev, cur, 0);
+        X = ggml_rms_norm(ctx0, X, 0.0f);
+        cur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.ladder_w, X), cur);
+    }
 
     cb(cur, "h_nextn", -1);
     res->t_h_nextn = cur;
