@@ -1,104 +1,113 @@
-# Shared-memory activation handoff during decode (`sharedram` branch)
+# Using this patched llama.cpp — user guide
 
-This notes how the changes by `xtof` on the `sharedram` branch (commits
-`fe175ff16` → `86eb532c6`, all in `tools/server/server.cpp`) enable a shared
-memory exchange with an external program (Python) during decode: activations
-are sent out, modified externally, and the modified values are reinjected into
-the decoding pass.
+This checkout is **not vanilla llama.cpp**. It is patched for a research project
+on "ladders": small side-networks trained on top of a *frozen* quantized LLM.
+The patch does two things:
 
-## The short answer
+1. it can **show what is happening inside** the model (dump the internal
+   activations of a given layer to a file), and
+2. it can **nudge the model** at inference time by adding a small learned bias
+   to the final embedding before the output layer (the "ladder").
 
-There is **no dedicated re-injection point in the graph** — the modified
-values are written back **in place** into the live intermediate tensor's data
-buffer, *between the compute of that layer's node and the compute of its
-downstream consumers*. The rest of the decode pass simply reads the modified
-data; no graph surgery or explicit reinjection op is involved.
+Everything else behaves like normal llama.cpp. All the technical details
+(env vars, file formats, internals, performance, gotchas) are in **AGENTS.md**;
+this page is just how to use it.
 
-## How it hangs together
+## The three modes (four ways to run it)
 
-### 1. Hook: the ggml scheduler eval-callback
+| what you want                                     | mode                      | python needed?       |
+| ------------------------------------------------- | ------------------------- | -------------------- |
+| normal fast server (benchmark, eval, sampling)    | **A — plain**             | no                   |
+| same, with a trained ladder folded into the graph | **A — graph ladder**      | no                   |
+| collect activations to train a ladder             | **B — capture**           | yes (`xllamacpp.py`) |
+| run a ladder without the python round-trip        | **C — native C++ ladder** | no                   |
 
-- `params.cb_eval = detsoncb_share_activs` (`server.cpp:373`) is passed to
-  `ggml_backend_sched_set_eval_callback` (`src/llama-context.cpp:779`,
-  upstream API declared at `ggml/include/ggml-backend.h:303`).
-- The scheduler invokes the callback per node in topological order:
-  `ask = true` before a chunk of nodes is computed, then `ask = false` **after**
-  the chunk containing the node has been computed **and**
-  `ggml_backend_synchronize` has been called (`ggml/src/ggml-backend.cpp:1558-1595`).
-  So by the time the `ask = false` branch runs, the tensor is fresh in its
-  buffer and its consumers have **not** run yet — the callback sits exactly in
-  the window where in-place tampering is effective.
+The build is the same for all of them; the mode is chosen by environment
+variables and by a small file named `layers2save` in the directory you launch
+from.
 
-### 2. Out path (C++ → Python)
+### 1. Plain server
 
-- `detson_send_tensor` (`server.cpp:43`) serializes the tensor —
-  first 2 floats = dims, then all values as f32 — into the POSIX shm segment
-  `/ring_buffer_demo` (10 M floats, created with `shm_open` + `ftruncate` +
-  `mmap` at `server.cpp:325-328`), then posts `/c2py_sem` and **blocks** on
-  `sem_wait(&sem_py2c)` (`server.cpp:89-90`).
-- Graph evaluation is frozen until Python replies: it is a fully synchronous
-  (stop-the-world) handoff during decode.
-- Shutdown sentinel: on quit the server writes `424242.0f` into slot 0 and
-  posts `/c2py_sem` (`server.cpp:461-463`); the external program treats
-  `slot 0 == 424242` after an `acquire` as "bye-bye" and stops listening.
-
-### 3. Re-injection (Python → C++)
-
-In `detsoncb_share_activs` (`server.cpp:247-265`), after the semaphore
-round-trip, the buffer is copied back **in place** into the tensor if two
-conditions hold:
-
-1. Slot 0 does *not* hold the shutdown sentinel (`shm->buffers[0][0] !=
-   424242.0f`). Right after the C++ side's own send, slot 0 holds `ne[1]`
-   (n_tokens), so the copy-back is **active by default**: whatever Python
-   left in the buffer — modified or untouched — is what the graph reads next.
-2. The tensor is the **last entry** in `detsavelayer`
-   (`detsavelayer[i+1] == NULL`). Those names come from the runtime file
-   `layers2save`; earlier listed layers are send-only.
-
-The write-back re-reads the shm buffer element-by-element in the same index
-order and overwrites the tensor in place:
-
-```c
-// recopie la shared RAM dans le computation graph de llamacpp
-uint8_t * data = (uint8_t *) t->data;
-...
-float py_val = shm->buffers[0][bufidx++];
-if (t->type == GGML_TYPE_F16)  *v = ggml_fp32_to_fp16(py_val);
-else if (t->type == GGML_TYPE_F32) *v = py_val;
+```bash
+cd /home/xtof/git/llama.cpp
+: > layers2save
+DETSON_OFF=1 ./build/bin/llama-server -m MODEL.gguf -ngl 99 -c 8192 \
+    --port 8082 --no-webui --no-warmup
 ```
 
-The next ops in the graph (residual add, the following blocks, and ultimately
-the final `MUL_MAT` against `output.weight` / unembedding) then execute
-normally and read the modified data. Debug commit `2532fd765` confirmed the
-`output.weight` mul-mat produces the same next token as implied by the
-modified activations — consistent with pure in-place reinjection.
+`DETSON_OFF=1` is required: without it the activation hook is always installed
+and everything becomes ~6x slower. (`build/bin` and `build_g/bin` are the same
+configuration; the experiments use `build_g` for the graph ladder below.)
 
-## Caveats
+### 2. Plain server + ladder folded into the model graph (recommended)
 
-- **Stop-the-world cost**: the callback runs synchronously inside the
-  scheduler loop, so each hooked layer stalls the whole decode until Python
-  round-trips the ~40 MB segment.
-- **Fixed segment size**: the shm holds exactly 10M float32, so the hooked
-  tensor must satisfy `ne[3]*ne[2]*ne[1]*ne[0] < 10_000_000` (e.g. during
-  prefill with `n_tokens` prompt tokens: `n_tokens * n_embd < 10M`).
+```bash
+# turn a trained mlp.pt into the graph format
+~/envs/transformers/bin/python3 ../researchplm/ladder/cppladder_export_graph.py \
+    --mlp logdir/xp_xxx_mlp.pt --out logdir/xp_xxx_graph.bin
 
-## Key locations
+DETSON_OFF=1 LADDER_BIN=/abs/path/xp_xxx_graph.bin LADDER_LAYER=19 \
+    ./build_g/bin/llama-server -m MODEL.gguf -ngl 99 -c 8192 \
+    --port 8082 --no-webui --no-warmup
+```
 
-| What | Where |
-|---|---|
-| SHM name, sem names, `SharedMemory` struct | `tools/server/server.cpp:28-36` |
-| shm creation (`shm_open`/`mmap`) | `tools/server/server.cpp:325-328` |
-| Out path `detson_send_tensor` + sem handshake | `tools/server/server.cpp:43-91` |
-| Callback `detsoncb_share_activs` | `tools/server/server.cpp:~106` |
-| In-place re-injection loop | `tools/server/server.cpp:247-265` |
-| Callback registration (`cb_eval`) | `tools/server/server.cpp:370-375` |
-| `cb_eval` plumbing | `common/common.h:333`, `src/llama-context.cpp:779`, `include/llama.h:343` |
-| Callback invocation in scheduler | `ggml/src/ggml-backend.cpp:1558-1595` |
-| Shutdown sentinel write | `tools/server/server.cpp:461-463` |
+Fast, no python, no shared memory. Works for the `nemotron_h` (Luciole) and
+`qwen35` architectures only; other models silently ignore `LADDER_BIN`.
 
-## Consumer
+### 3. Capture activations (needs the python proxy)
 
-The `xllamacpp.py` script in this directory is a self-contained consumer: it
-launches the modified `llama-server`, listens on the shared memory segment,
-and can read/modify activations.
+```bash
+cd /home/xtof/git/llama.cpp
+printf 'l_out-19\nresult_norm\n' > layers2save      # one newline per line!
+
+LOGITS_ALL=1 ~/envs/transformers/bin/python3 xllamacpp.py \
+    --model MODEL.gguf --port 8261 --activs /abs/path/activs.bin
+```
+
+`xllamacpp.py` starts the server, drains the shared memory, and writes every
+hooked tensor to `--activs` (gzip chunks). The server **blocks** for each hooked
+layer until python answers, so it must always be started through
+`xllamacpp.py` — a server with a non-empty `layers2save` and no python client
+hangs forever.
+
+### 4. Native C++ ladder (no python)
+
+```bash
+printf 'l_out-19\nresult_norm\n' > layers2save
+~/envs/transformers/bin/python3 ../researchplm/ladder/cppladder_export.py \
+    --mlp logdir/xp_xxx_mlp.pt --out logdir/xp_xxx_cpp.bin
+
+LADDER_CPP=/abs/path/xp_xxx_cpp.bin \
+    ~/envs/transformers/bin/python3 xllamacpp.py --model MODEL.gguf --port 8261
+```
+
+The ladder is computed inside llama.cpp; the weights file is hot-reloaded when
+it changes on disk (handy when the policy is being updated between rollouts).
+
+## How to tell it worked
+
+* plain: `DETSON_OFF set: detson callback removed (plain mode)`
+* graph ladder: `ladder: ... (8192x4096 f16) on CUDA0, injected at l_out-19`
+* capture: `capture server ready` / rows written to the `--activs` file
+* native ladder: `cppladder: native ladder installed from ... (nodes: ...)`
+
+## Four things that bite
+
+1. **Never rebuild a build directory while a server from it is running** — the
+   linker rewrites the `.so` in place and corrupts the live process. Use the
+   other build dir (`build/` vs `build_g/`) or stop the server first.
+2. `layers2save` is read from the **current directory**, not from the build
+   dir. An empty/absent file + `DETSON_OFF=1` = plain mode; a non-empty file
+   without the python client = deadlock.
+3. Both builds (`build/`, `build_g/`) are the same configuration; `xllamacpp.py`
+   always uses `build/`, the experiments' graph server uses `build_g/`.
+4. Only `nemotron_h` and `qwen35` have the in-graph ladder hook.
+
+## Where to learn more
+
+* **AGENTS.md** (this directory) — the technical reference: the three modes,
+  env vars, file formats, internals of the shared-memory handshake, performance
+  numbers, build rules, known issues.
+* `../researchplm/ladder/cppladder_README.md` — the native ladder and graph
+  mode, from the research repo.
+* `README.md` — upstream llama.cpp documentation.
