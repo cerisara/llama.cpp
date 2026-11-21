@@ -27,7 +27,7 @@ def load_activs(infile):
             names.append(name)
             nbytes = np.frombuffer(f.read(8), dtype=np.int64).item()
             data = np.frombuffer(gzip.decompress(f.read(nbytes)), dtype=np.float32)
-            data.shape = shape
+            data = data.reshape(shape)
             activs.append(data)
     return activs, names
 
