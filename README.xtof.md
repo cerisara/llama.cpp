@@ -26,6 +26,19 @@ The build is the same for all of them; the mode is chosen by environment
 variables and by a small file named `layers2save` in the directory you launch
 from.
 
+**Graph ladder vs native ladder (A vs C).** Both add the *same* bias to the
+model's final embedding; only the way it is computed differs:
+
+|                | **A — graph ladder**                  | **C — native C++ ladder**          |
+| -------------- | ------------------------------------- | ---------------------------------- |
+| speed          | as fast as the plain server           | much slower (per-token overhead)   |
+| precision      | f16, folded approximation (`--alpha`) | exact f32                          |
+| models         | only `nemotron_h` and `qwen35`        | any model                          |
+| weight updates | restart the server                    | hot-reloaded when the file changes |
+
+Rule of thumb: use **A** for a fixed ladder on Luciole/Qwen3.5; use **C** when
+the ladder changes between rollouts (e.g. GRPO) or the model has no graph hook.
+
 ### 1. Plain server
 
 ```bash

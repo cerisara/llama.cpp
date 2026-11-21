@@ -38,19 +38,18 @@ Hence the patch. Consumers (do not break their expectations):
 
 * branch: `sharedram2026` (base: `ggml-org/llama.cpp`).
 * remotes: `origin` = upstream ggml-org, `a` = `github:cerisara/llama.cpp`.
-* **The patch is committed** as `15c53ffad` ("version lully: support both with
-  python and with ladder-folded-in-ggml-graph", 2026-11-21): the 8 files
-  `runfirst.sh`, `src/llama-model.cpp`, `src/llama-model.h`,
-  `src/models/models.h`, `src/models/nemotron-h.cpp`, `src/models/qwen35.cpp`,
-  `tools/server/server.cpp`, `xllamacpp.py`.
+* **The patch is committed**: `15c53ffad` (llama.cpp + `xllamacpp.py`), the
+  `xllamacpp.py` robustness fixes came in through the merge `c1f1b1cff`, and
+  `430d63bae` added `AGENTS.md` + `README.xtof.md`. So a fresh clone of HEAD
+  already contains the three modes and both docs.
   **Still untracked**: `tools/server/cppladder_ladder.h` and
   `tools/server/cppladder_server.cpp` (mode C needs the header!) — a fresh
-  clone of this commit **cannot build mode C**. Copy them from
+  clone of HEAD **cannot build mode C**. Copy them from
   `../researchplm/ladder/` (or from this working tree) first.
   Do not run `cppladder_deploy.sh` blindly either: it does
-  `git checkout HEAD -- tools/server/server.cpp xllamacpp.py`, which is now
-  safe (HEAD has the patch) but it also regenerates those two files from
-  `../researchplm/ladder/` — check the diff before rebuilding.
+  `git checkout HEAD -- tools/server/server.cpp xllamacpp.py` (safe now) but it
+  also regenerates those two files from `../researchplm/ladder/` — check the
+  diff before rebuilding.
 * `tools/server/cppladder_server.cpp` is currently a **byte-identical copy of
   `tools/server/server.cpp`** (a build artefact of `cppladder_gen.py`); the
   canonical sources live in `../researchplm/ladder/` (`cppladder_*.py`,
@@ -165,6 +164,15 @@ LOGITS_ALL=1 PYTHONUNBUFFERED=1 \
 * Shutdown: the server writes `424242.0f` in slot 0 and posts the semaphore;
   python sees the sentinel and stops. `xllamacpp.py` also `rm -f`s stale
   `/dev/shm/sem.*` on start.
+* The listener thread is a **daemon** with a `stopped` Event: it acquires
+  `/c2py_sem` with a 0.5 s timeout in a loop, so a SIGTERM-killed server (which
+  never posts the sentinel) cannot wedge it, and every shutdown path does
+  `stopped.set(); join(timeout=10)`.
+* The OpenAI proxy **serializes** requests (`threading.Lock`): llama-server runs
+  a single slot, so rollouts never interleave and the ladder pairing is exact.
+  To run captures in parallel you must start several `xllamacpp.py` processes
+  (different ports, and a distinct shm/sem name each — those names are
+  hard-coded in both `xllamacpp.py` and `server.cpp`).
 * Other env vars in this path: `TOKNOD=<node>` (also dump a matching *input*
   tensor of the node), `SAVE_EMB=<node>` (dump the unembedding matrix to
   `detembeds.bin`, requires `-ngl 0`), `NTOKS=<n>` (fixed `n_predict` in serve
@@ -197,8 +205,12 @@ LADDER_CPP=/abs/path/xp_xxx_cpp.bin \
 * `DETSON_OFF=1` may be set: it removes `cb_eval` only when it is *not*
   `detsoncb_ladder_cpp`, so mode C survives it.
 * The `xllamacpp.py` in this tree must be the `cppladder` version: when
-  `LADDER_CPP` is set it uses `NoopHandler` so the ladder is applied exactly
-  once (not twice, python + C++).
+  `LADDER_CPP` **or `LADDER_GRAPH`** is set it uses `NoopHandler` (it prints
+  `cppladder: ladder active natively in C++ (...) -> python handler skipped`),
+  so the ladder is applied exactly once (not twice, python + C++).
+  `LADDER_GRAPH` is for callers that go through `xllamacpp.py` while the ladder
+  is folded in-graph via `LADDER_BIN`; it only prevents a double application
+  (no script in `../researchplm` sets it today).
 * Verify in stderr: `cppladder: native ladder installed from ... (nodes: ...)`
   and, with `#define CPPLADDER_TIMING 1` (default in `cppladder_ladder.h`),
   periodic `cppladder: cb(...) ... ms` lines.
@@ -228,6 +240,7 @@ LADDER_CPP=/abs/path/xp_xxx_cpp.bin \
 | `TOKNOD=<node>`     | B    | additionally dump a matching input tensor                     |
 | `SAVE_EMB=<node>`   | B    | dump the unembedding matrix to `detembeds.bin` (`-ngl 0`)     |
 | `NTOKS=<n>`         | B    | fixed `n_predict` in `xllamacpp.py` serve mode                |
+| `LADDER_GRAPH`      | A    | python-side flag → `xllamacpp.py` uses `NoopHandler`          |
 
 ## 4. Build layout and rebuild rules
 
@@ -251,10 +264,12 @@ LADDER_CPP=/abs/path/xp_xxx_cpp.bin \
 ## 5. `layers2save` — the cwd trap
 
 * It is read from the **process current working directory**, not from the build
-  dir. `b0.py:GraphServer.start()` therefore truncates
-  `~/git/llama.cpp/layers2save` before launching, and `xllamacpp.py` writes it
-  before starting the capture server. Never launch a mode-A server from a cwd
-  where a stale non-empty `layers2save` exists **without** `DETSON_OFF`.
+  dir, and **`xllamacpp.py` only reads it** (it uses `layers[-1]` to know which
+  node the python handler may modify). The *caller* writes it before launching
+  the server: `b0.py:CaptureServer.start()` writes the two node names,
+  `GraphServer.start()` truncates it, `xp_sqa*_base.py` truncates it. Never
+  launch a mode-A server from a cwd where a stale non-empty `layers2save`
+  exists **without** `DETSON_OFF`.
 * Node names come from `cb(cur, "l_out", il)` (→ `l_out-19`) and
   `cb(cur, "result_norm", -1)` in `src/models/*.cpp`.
 
@@ -356,7 +371,7 @@ work is negligible in comparison (2 activations per prefill, not per token).
 | `src/models/nemotron-h.cpp:231,328`  | in-graph ladder + `l_out-K` capture                    |
 | `src/models/qwen35.cpp:221,206`      | idem for qwen35                                        |
 | `tools/server/server-context.cpp:43` | `LOGITS_ALL` output limits                             |
-| `xllamacpp.py`                       | shm client, `ActivsSaver`, proxy, launcher             |
+| `xllamacpp.py`                       | shm client, `ActivsSaver`, OpenAI proxy (`/shutdown`)  |
 | `README.xtof.md`                     | layman/user guide (3 modes + commands)                 |
 
 ## 9. Known issues / possible next steps
